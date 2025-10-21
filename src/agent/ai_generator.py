@@ -248,6 +248,82 @@ Output format: Pure JavaScript code only"""
         return hashlib.sha256(response.encode()).hexdigest()
 
 
+    async def generate_mcp_tool_call(
+        self,
+        task_description: str,
+        include_attestation: bool = True
+    ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+        """
+        Generate MCP tool call from natural language with TEE attestation.
+
+        Returns:
+            (mcp_call_dict, attestation_data) tuple
+        """
+        prompt = self._build_mcp_prompt(task_description)
+        mcp_json, attestation = await self._call_ai(prompt, include_attestation)
+
+        try:
+            # Extract JSON from response (handle cases where AI adds extra text)
+            mcp_json = self._extract_json(mcp_json)
+
+            # Parse the JSON response
+            mcp_call = json.loads(mcp_json)
+            return mcp_call, attestation
+        except json.JSONDecodeError as e:
+            raise Exception(f"Failed to parse MCP call JSON: {str(e)}\nGenerated: {mcp_json}")
+
+    def _extract_json(self, text: str) -> str:
+        """Extract JSON object from text that may contain extra content"""
+        text = text.strip()
+
+        # Find the first { and last }
+        start = text.find('{')
+        end = text.rfind('}')
+
+        if start != -1 and end != -1 and end > start:
+            return text[start:end+1]
+
+        return text
+
+    def _build_mcp_prompt(self, task: str) -> str:
+        """Build optimized prompt for MCP tool call generation"""
+        return f"""Task: {task}
+
+Available MCP tools:
+- mcp__sandbox__exec_command: Execute shell commands
+  Parameters: {{"command": "string", "timeout": number (optional), "async_mode": bool (optional)}}
+
+- mcp__sandbox__read_file: Read file contents
+  Parameters: {{"file": "absolute_path", "start_line": number (optional), "end_line": number (optional)}}
+
+- mcp__sandbox__write_file: Write file contents
+  Parameters: {{"file": "absolute_path", "content": "string", "append": bool (optional)}}
+
+- mcp__sandbox__list_path: List directory contents
+  Parameters: {{"path": "directory_path", "recursive": bool (optional), "show_hidden": bool (optional)}}
+
+- mcp__sandbox__find_files: Find files by pattern
+  Parameters: {{"path": "directory_path", "glob": "pattern"}}
+
+- mcp__sandbox__search_in_file: Search in file content
+  Parameters: {{"file": "absolute_path", "regex": "pattern"}}
+
+- mcp__sandbox__execute_jupyter_code: Execute Python code
+  Parameters: {{"code": "python_code", "timeout": number (optional)}}
+
+- mcp__sandbox__execute_nodejs_code: Execute JavaScript code
+  Parameters: {{"code": "javascript_code", "timeout": number (optional)}}
+
+CRITICAL: Your response must be ONLY valid JSON. Do not include any text before or after the JSON.
+Output the JSON object directly without any preamble, explanation, or markdown formatting.
+
+JSON format:
+{{
+    "tool": "mcp__sandbox__tool_name",
+    "parameters": {{ ... }}
+}}"""
+
+
 async def verify_ai_attestation(attestation_data: Dict[str, Any]) -> bool:
     """
     Verify TEE attestation for AI inference (lightweight check).
