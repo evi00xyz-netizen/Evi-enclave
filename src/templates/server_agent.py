@@ -449,6 +449,7 @@ class ServerAgent(BaseAgent):
     async def _create_agent_card(self) -> Dict[str, Any]:
         """Create ERC-8004 agent card."""
         from ..agent.agent_card import create_tee_agent_card
+        import os
 
         agent_address = await self._get_agent_address()
 
@@ -464,6 +465,11 @@ class ServerAgent(BaseAgent):
         if not self.ai_generator:
             capabilities = [c for c in capabilities if c[0] not in ["ai-code-generation", "ai-mcp-control"]]
 
+        # Get identity registry address
+        identity_registry = self.config.registries.get('identity') if hasattr(self.config, 'registries') else None
+        if not identity_registry:
+            identity_registry = os.getenv("IDENTITY_REGISTRY_ADDRESS")
+
         return create_tee_agent_card(
             name=f"TEE Server Agent - {self.config.domain}",
             description="TEE-secured agent with AIO Sandbox integration for secure code execution",
@@ -472,5 +478,7 @@ class ServerAgent(BaseAgent):
             agent_id=self.agent_id if self.is_registered else None,
             signature=None,
             capabilities=capabilities,
-            chain_id=self.config.chain_id
+            chain_id=self.config.chain_id,
+            identity_registry=identity_registry,
+            ai_model=None  # Will read from AI_MODEL environment variable
         )

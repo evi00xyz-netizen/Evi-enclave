@@ -303,7 +303,11 @@ async def get_status():
     tee_verified = False
 
     # Always check on-chain registration to prevent spam registrations
-    address_check = await agent._registry_client.check_agent_registration(agent_address=agent_address)
+    # Use fast path if we already have agent_id in memory (1 RPC call vs 1000)
+    address_check = await agent._registry_client.check_agent_registration(
+        agent_address=agent_address,
+        agent_id=agent.agent_id if agent.agent_id else None
+    )
 
     if address_check["registered"]:
         is_registered = True
@@ -478,24 +482,46 @@ async def register_agent():
     if balance_eth < 0.001:
         raise HTTPException(status_code=400, detail="Insufficient balance")
 
-    # Try to register
+    # Try to register (don't wait for receipt - return tx_hash immediately)
     try:
-        agent_id = await agent._registry_client.register_agent(agent.config.domain, agent_address)
-        agent.agent_id = agent_id
-        agent.is_registered = True
+        result = await agent._registry_client.register_agent(
+            agent.config.domain,
+            agent_address,
+            wait_for_receipt=False
+        )
+
         return {
             "success": True,
-            "agent_id": agent_id,
-            "domain": agent.config.domain,
-            "address": agent_address
+            "tx_hash": result["tx_hash"],
+            "agent_address": result["agent_address"],
+            "domain": agent.config.domain
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.get("/api/transaction/{tx_hash}/status")
+async def get_transaction_status(tx_hash: str):
+    """Check transaction status and extract agent_id if confirmed."""
+    if not agent:
+        raise HTTPException(status_code=503, detail="Agent not initialized")
+
+    try:
+        status = await agent._registry_client.get_transaction_status(tx_hash)
+
+        # If confirmed and we have agent_id, update agent state
+        if status.get("confirmed") and status.get("agent_id"):
+            agent.agent_id = status["agent_id"]
+            agent.is_registered = True
+
+        return status
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to check transaction: {str(e)}")
+
+
 @app.post("/api/tee/register")
 async def register_tee():
-    """Register TEE with mock proof."""
+    """Register TEE with proof."""
     global agent, tee_auth, tee_verifier
 
     if not agent or not tee_auth or not tee_verifier:
@@ -567,12 +593,23 @@ async def register_tee():
         if result.get("already_registered"):
             return {"success": True, "already_registered": True, "agent_id": agent.agent_id, "pubkey": result["pubkey"]}
 
+        # Get dynamic explorer URL based on chain config
+        chain_configs = {
+            84532: "https://sepolia.basescan.org",
+            8453: "https://basescan.org",
+            11155111: "https://sepolia.etherscan.io",
+            1: "https://etherscan.io"
+        }
+        chain_id = agent.config.chain_id
+        explorer_base = chain_configs.get(chain_id, "https://etherscan.io")
+        explorer_url = f"{explorer_base}/tx/{result['tx_hash']}"
+
         return {
             "success": True,
             "tx_hash": result["tx_hash"],
             "agent_id": agent.agent_id,
             "pubkey": result["pubkey"],
-            "explorer_url": f"https://sepolia.basescan.org/tx/{result['tx_hash']}"
+            "explorer_url": explorer_url
         }
     except Exception as e:
         import traceback

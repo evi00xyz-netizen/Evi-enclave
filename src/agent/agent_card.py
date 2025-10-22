@@ -260,7 +260,9 @@ def create_tee_agent_card(
     agent_id: Optional[int] = None,
     signature: Optional[str] = None,
     capabilities: Optional[List[tuple[str, str]]] = None,
-    chain_id: int = 84532
+    chain_id: int = 84532,
+    identity_registry: Optional[str] = None,
+    ai_model: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Create a TEE-secured agent card.
@@ -274,10 +276,14 @@ def create_tee_agent_card(
         signature: Registration signature (if registered)
         capabilities: List of (name, description) tuples
         chain_id: Blockchain chain ID (default: Base Sepolia)
+        identity_registry: Identity registry contract address (for CAIP-2 registrations)
+        ai_model: AI model identifier (e.g., "claude-sonnet-4-5-20250929")
 
     Returns:
         Agent card dictionary
     """
+    import os
+
     builder = AgentCardBuilder(name, description)
 
     # Add capabilities
@@ -292,13 +298,14 @@ def create_tee_agent_card(
         authentication={"type": "signature", "scheme": "EIP-712"}
     )
 
-    # Add registration if available
-    if agent_id is not None and signature:
-        caip10_address = f"eip155:{chain_id}:{agent_address}"
-        builder.add_registration(agent_id, caip10_address, signature, chain_id)
-
     # Set trust models for TEE agent
     builder.set_trust_models(["tee-attestation", "feedback", "inference-validation"])
+
+    # Set AI model from parameter or environment variable
+    model = ai_model or os.getenv('AI_MODEL')
+    if not model:
+        print("⚠️  AI_MODEL not provided and environment variable not set")
+    builder.card["aiModel"] = model
 
     # Set infrastructure
     builder.set_infrastructure(
@@ -311,7 +318,17 @@ def create_tee_agent_card(
         }
     )
 
-    return builder.build()
+    # Build the card
+    card = builder.build()
+
+    # Add registrations if agent is registered
+    if agent_id is not None and identity_registry:
+        card["registrations"] = [{
+            "agentId": agent_id,
+            "agentRegistry": f"eip155:{chain_id}:{identity_registry}"
+        }]
+
+    return card
 
 
 def create_ai_agent_card(

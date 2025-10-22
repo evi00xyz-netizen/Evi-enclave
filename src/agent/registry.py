@@ -202,7 +202,8 @@ class RegistryClient:
     async def check_agent_registration(
         self,
         domain: str = None,
-        agent_address: str = None
+        agent_address: str = None,
+        agent_id: int = None
     ) -> Dict[str, Any]:
         """
         Check if agent is registered (owns an NFT).
@@ -210,10 +211,26 @@ class RegistryClient:
         Args:
             domain: Unused (kept for compatibility)
             agent_address: Agent's Ethereum address
+            agent_id: Optional known agent ID for fast verification (1 RPC call vs 1000)
 
         Returns:
             Dict with registration info or {"registered": False}
         """
+        # FAST PATH: If we know the agent_id, use direct verification (1 RPC call)
+        if agent_id is not None:
+            print(f"🚀 Using fast path verification for agent ID {agent_id}")
+            result = await self.verify_agent_by_id(agent_id, agent_address)
+            if result["verified"]:
+                return {
+                    "registered": True,
+                    "agent_id": agent_id,
+                    "agent_address": result["owner"]
+                }
+            else:
+                print(f"⚠️  Fast verification failed, falling back to slow path")
+                # Fall through to slow path
+
+        # SLOW PATH: Existing logic for unknown agent_id
         try:
             if agent_address:
                 checksum_address = Web3.to_checksum_address(agent_address)
@@ -270,8 +287,9 @@ class RegistryClient:
         self,
         domain: str,
         agent_address: str,
-        agent_card: Dict[str, Any] = None
-    ) -> int:
+        agent_card: Dict[str, Any] = None,
+        wait_for_receipt: bool = True
+    ) -> Dict[str, Any]:
         """
         Register agent by minting ERC-721 NFT.
 
@@ -279,9 +297,10 @@ class RegistryClient:
             domain: Agent's domain (used to build tokenURI)
             agent_address: Unused (msg.sender gets NFT)
             agent_card: Unused
+            wait_for_receipt: If True, wait for confirmation and return agent_id. If False, return tx_hash immediately.
 
         Returns:
-            Agent ID (token ID)
+            Dict with either {'agent_id': int} or {'tx_hash': str, 'agent_address': str}
         """
         if not self.account:
             raise ValueError("Account required")
@@ -290,7 +309,7 @@ class RegistryClient:
         check = await self.check_agent_registration(agent_address=self.account.address)
         if check["registered"]:
             print(f"✅ Already registered with Agent ID: {check['agent_id']}")
-            return check["agent_id"]
+            return {"agent_id": check["agent_id"], "already_registered": True}
 
         # Build tokenURI pointing to /agent.json
         token_uri = f"https://{domain}/agent.json"
@@ -307,6 +326,14 @@ class RegistryClient:
 
         print(f"📤 Registration tx: {tx_hash.hex()}")
 
+        # Return immediately if not waiting for receipt
+        if not wait_for_receipt:
+            return {
+                "tx_hash": tx_hash.hex(),
+                "agent_address": self.account.address
+            }
+
+        # Otherwise wait for receipt and extract agent_id
         receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
 
         if receipt.status != 1:
@@ -327,7 +354,104 @@ class RegistryClient:
                 raise RuntimeError("Registration succeeded but couldn't determine agent ID")
 
         print(f"✅ Registered with Agent ID: {agent_id}")
-        return agent_id
+        return {"agent_id": agent_id, "tx_hash": tx_hash.hex()}
+
+    async def get_transaction_status(self, tx_hash: str) -> Dict[str, Any]:
+        """
+        Get transaction status and extract agent_id if confirmed.
+
+        Args:
+            tx_hash: Transaction hash to check
+
+        Returns:
+            Dict with status, confirmations, and agent_id if available
+        """
+        try:
+            # Convert tx_hash to bytes if needed
+            if isinstance(tx_hash, str):
+                tx_hash_bytes = bytes.fromhex(tx_hash.replace('0x', ''))
+            else:
+                tx_hash_bytes = tx_hash
+
+            # Try to get receipt
+            receipt = self.w3.eth.get_transaction_receipt(tx_hash_bytes)
+
+            if receipt is None:
+                return {
+                    "status": "pending",
+                    "confirmed": False
+                }
+
+            # Transaction is mined
+            if receipt.status != 1:
+                return {
+                    "status": "failed",
+                    "confirmed": True,
+                    "success": False
+                }
+
+            # Extract agent_id from logs
+            agent_id = None
+            if receipt['logs'] and len(receipt['logs'][0]['topics']) >= 4:
+                agent_id = int(receipt['logs'][0]['topics'][3].hex(), 16)
+
+            return {
+                "status": "confirmed",
+                "confirmed": True,
+                "success": True,
+                "agent_id": agent_id,
+                "block_number": receipt.blockNumber
+            }
+
+        except Exception as e:
+            # Transaction not yet mined
+            return {
+                "status": "pending",
+                "confirmed": False,
+                "error": str(e)
+            }
+
+    async def verify_agent_by_id(
+        self,
+        agent_id: int,
+        expected_address: str = None
+    ) -> Dict[str, Any]:
+        """
+        Fast verification using known agent_id.
+
+        Uses ownerOf(agent_id) for single RPC call verification instead of brute force search.
+        Optionally validates tokenURI domain.
+
+        Args:
+            agent_id: The known agent ID (token ID) to verify
+            expected_address: Optional address to verify ownership against
+
+        Returns:
+            Dict with verification status, owner, and token URI
+        """
+        try:
+            # Single RPC call to verify ownership
+            owner = self.identity_contract.functions.ownerOf(agent_id).call()
+
+            verified = True
+            if expected_address:
+                checksum_expected = Web3.to_checksum_address(expected_address)
+                verified = owner.lower() == checksum_expected.lower()
+
+            # Get tokenURI for additional validation if needed
+            token_uri = self.identity_contract.functions.tokenURI(agent_id).call()
+
+            print(f"✅ Fast verification: Agent ID {agent_id} owned by {owner}")
+
+            return {
+                "verified": verified,
+                "agent_id": agent_id,
+                "owner": owner,
+                "token_uri": token_uri
+            }
+        except Exception as e:
+            print(f"⚠️  Fast verification failed for agent ID {agent_id}: {e}")
+            return {"verified": False, "error": str(e)}
 
     async def submit_feedback(
         self,
