@@ -290,6 +290,13 @@ class APIClient {
     async getAttestation() {
         return this.get('/api/attestation');
     }
+
+    /**
+     * Get transaction status
+     */
+    async getTransactionStatus(txHash) {
+        return this.get(`/api/transaction/${txHash}/status`);
+    }
 }
 
 /**
@@ -354,6 +361,24 @@ class UIUtils {
      */
     static formatEth(amount) {
         return parseFloat(amount).toFixed(4);
+    }
+
+    /**
+     * Format transaction hash for display
+     */
+    static formatTxHash(txHash) {
+        if (!txHash) return '';
+        const hash = txHash.startsWith('0x') ? txHash : '0x' + txHash;
+        return `${hash.substring(0, 10)}...${hash.substring(hash.length - 8)}`;
+    }
+
+    /**
+     * Get block explorer URL for transaction
+     */
+    static getExplorerUrl(txHash, explorerBaseUrl) {
+        if (!txHash || !explorerBaseUrl) return '';
+        const hash = txHash.startsWith('0x') ? txHash : '0x' + txHash;
+        return `${explorerBaseUrl}/tx/${hash}`;
     }
 
     /**

@@ -55,6 +55,13 @@ class ServerAgent(BaseAgent):
                 data.get('max_retries', 2),
                 data.get('include_attestation', True)
             )
+        elif task_type == 'ai_mcp_control':
+            return await self._ai_mcp_control(
+                data.get('description', 'No description provided'),
+                data.get('include_attestation', True),
+                data.get('show_mcp_call', True),
+                data.get('confirm_dangerous', True)
+            )
         else:
             return {"error": "Unknown task type", "type": task_type}
 
@@ -318,6 +325,119 @@ class ServerAgent(BaseAgent):
             "retries_used": max_retries
         }
 
+    async def _ai_mcp_control(
+        self,
+        description: str,
+        include_attestation: bool = True,
+        show_mcp_call: bool = True,
+        confirm_dangerous: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Generate MCP tool call from natural language and execute it with TEE attestation.
+
+        Returns verifiable result with attestation data for end-user verification.
+        """
+        if not self.ai_generator:
+            return {
+                "success": False,
+                "error": "AI generator not available. Set REDPILL_API_KEY environment variable.",
+                "message": "Please configure RedPill API key in environment"
+            }
+
+        # 1. Generate MCP tool call with AI (includes TEE attestation)
+        try:
+            mcp_call, attestation = await self.ai_generator.generate_mcp_tool_call(
+                description, include_attestation
+            )
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "AI MCP call generation failed"
+            }
+
+        # 2. Validate MCP call structure
+        if not isinstance(mcp_call, dict) or 'tool' not in mcp_call or 'parameters' not in mcp_call:
+            return {
+                "success": False,
+                "error": "Invalid MCP call structure",
+                "message": "Generated MCP call is malformed",
+                "mcp_call": mcp_call if show_mcp_call else None
+            }
+
+        # 3. Check if dangerous operation (optional confirmation)
+        dangerous_tools = ['exec_command', 'write_file', 'cleanup']
+        if confirm_dangerous and any(d in mcp_call['tool'] for d in dangerous_tools):
+            # In production, you might want to add a confirmation step here
+            # For now, we'll just log it
+            print(f"⚠️ Executing potentially dangerous MCP tool: {mcp_call['tool']}")
+
+        # 4. Execute the MCP tool call
+        try:
+            result = await self._execute_mcp_tool(mcp_call['tool'], mcp_call['parameters'])
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "MCP tool execution failed",
+                "mcp_call": mcp_call if show_mcp_call else None,
+                "attestation": attestation if include_attestation else None
+            }
+
+        # 5. Return success response
+        return {
+            "success": True,
+            "message": "MCP operation completed successfully",
+            "mcp_call": mcp_call if show_mcp_call else None,
+            "result": result,
+            "attestation": attestation if include_attestation else None,
+            "verification_url": "/verify-attestation" if attestation else None
+        }
+
+    async def _execute_mcp_tool(self, tool_name: str, parameters: Dict[str, Any]) -> Any:
+        """
+        Execute an MCP tool via the sandbox.
+
+        Maps MCP tool names to sandbox API endpoints.
+        """
+        # Map MCP tool names to sandbox endpoints
+        tool_mapping = {
+            'mcp__sandbox__exec_command': '/v1/shell/exec',
+            'mcp__sandbox__read_file': '/v1/file/read',
+            'mcp__sandbox__write_file': '/v1/file/write',
+            'mcp__sandbox__list_path': '/v1/file/list',
+            'mcp__sandbox__find_files': '/v1/file/find',
+            'mcp__sandbox__search_in_file': '/v1/file/search',
+            'mcp__sandbox__execute_jupyter_code': '/v1/jupyter/execute',
+            'mcp__sandbox__execute_nodejs_code': '/v1/nodejs/execute'
+        }
+
+        endpoint = tool_mapping.get(tool_name)
+        if not endpoint:
+            raise ValueError(f"Unknown MCP tool: {tool_name}")
+
+        # Execute via sandbox
+        async with httpx.AsyncClient() as client:
+            try:
+                resp = await client.post(
+                    f"{self.sandbox_url}{endpoint}",
+                    json=parameters,
+                    timeout=60.0
+                )
+
+                result = resp.json()
+
+                # Handle different response formats
+                if result.get('success') and 'data' in result:
+                    return result['data']
+                elif result.get('success'):
+                    return result
+                else:
+                    raise Exception(result.get('message', 'Unknown error'))
+
+            except Exception as e:
+                raise Exception(f"MCP tool execution failed: {str(e)}")
+
     def _get_verification_instructions(self) -> Dict[str, str]:
         """Get instructions for end-user verification"""
         return {
@@ -329,6 +449,7 @@ class ServerAgent(BaseAgent):
     async def _create_agent_card(self) -> Dict[str, Any]:
         """Create ERC-8004 agent card."""
         from ..agent.agent_card import create_tee_agent_card
+        import os
 
         agent_address = await self._get_agent_address()
 
@@ -336,12 +457,18 @@ class ServerAgent(BaseAgent):
             ("shell-execution", "Execute shell commands via AIO Sandbox"),
             ("file-operations", "Read/write files in sandbox"),
             ("jupyter-execution", "Run Python/Node.js code"),
-            ("ai-code-generation", "Generate and execute code from natural language with TEE attestation")
+            ("ai-code-generation", "Generate and execute code from natural language with TEE attestation"),
+            ("ai-mcp-control", "Control sandbox via MCP tools using natural language with TEE attestation")
         ]
 
-        # Only add AI capability if generator is available
+        # Only add AI capabilities if generator is available
         if not self.ai_generator:
-            capabilities = [c for c in capabilities if c[0] != "ai-code-generation"]
+            capabilities = [c for c in capabilities if c[0] not in ["ai-code-generation", "ai-mcp-control"]]
+
+        # Get identity registry address
+        identity_registry = self.config.registries.get('identity') if hasattr(self.config, 'registries') else None
+        if not identity_registry:
+            identity_registry = os.getenv("IDENTITY_REGISTRY_ADDRESS")
 
         return create_tee_agent_card(
             name=f"TEE Server Agent - {self.config.domain}",
@@ -351,5 +478,7 @@ class ServerAgent(BaseAgent):
             agent_id=self.agent_id if self.is_registered else None,
             signature=None,
             capabilities=capabilities,
-            chain_id=self.config.chain_id
+            chain_id=self.config.chain_id,
+            identity_registry=identity_registry,
+            ai_model=None  # Will read from AI_MODEL environment variable
         )

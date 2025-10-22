@@ -70,8 +70,21 @@
         let state = {
             wallet: null,
             registration: null,
-            tee: null
+            tee: null,
+            chainConfig: null,
+            registrationTx: null,  // Store registration tx_hash for persistence
+            teeTx: null            // Store TEE tx_hash for persistence
         };
+
+        // Load chain config for explorer URLs
+        async function loadChainConfig() {
+            const result = await apiClient.getChainConfig();
+            if (result.success) {
+                state.chainConfig = result.data;
+            }
+        }
+
+        loadChainConfig();
 
         async function loadWallet() {
             const step1 = document.getElementById('step1');
@@ -129,10 +142,22 @@
                 step2.className = 'bg-gray-800 rounded-lg p-6';
                 status.className = 'w-8 h-8 rounded-full bg-green-600 flex items-center justify-center';
                 status.innerHTML = '✓';
+
+                // Build transaction link if we have tx_hash in state
+                const txLinkHtml = state.registrationTx && state.chainConfig ? `
+                    <p class="text-sm text-gray-400 mb-1">TX: ${UIUtils.formatTxHash(state.registrationTx)}</p>
+                    <a href="${UIUtils.getExplorerUrl(state.registrationTx, state.chainConfig.block_explorer_urls[0])}"
+                       target="_blank" rel="noopener noreferrer"
+                       class="text-blue-400 hover:text-blue-300 text-sm inline-block mb-2">
+                        → View on Explorer ↗
+                    </a>
+                ` : '';
+
                 content.innerHTML = `
                     <p class="text-green-400 mb-2">✓ Agent Registered</p>
                     <p class="text-sm text-gray-400">Agent ID: ${data.agent.agent_id}</p>
                     <p class="text-sm text-gray-400">Domain: ${data.agent.domain}</p>
+                    ${txLinkHtml}
                 `;
                 state.registration = data.agent;
                 document.getElementById('step3').classList.remove('opacity-50');
@@ -166,9 +191,21 @@
                 step3.className = 'bg-gray-800 rounded-lg p-6';
                 status.className = 'w-8 h-8 rounded-full bg-green-600 flex items-center justify-center';
                 status.innerHTML = '✓';
+
+                // Build transaction link if we have tx_hash in state
+                const txLinkHtml = state.teeTx && state.chainConfig ? `
+                    <p class="text-sm text-gray-400 mb-1">TX: ${UIUtils.formatTxHash(state.teeTx)}</p>
+                    <a href="${UIUtils.getExplorerUrl(state.teeTx, state.chainConfig.block_explorer_urls[0])}"
+                       target="_blank" rel="noopener noreferrer"
+                       class="text-blue-400 hover:text-blue-300 text-sm inline-block mb-2">
+                        → View on Explorer ↗
+                    </a>
+                ` : '';
+
                 content.innerHTML = `
                     <p class="text-green-400 mb-2">✓ TEE Verified</p>
                     <p class="text-sm text-gray-400">Agent ID: ${data.agent.agent_id}</p>
+                    ${txLinkHtml}
                 `;
                 document.getElementById('step4').classList.remove('opacity-50');
                 markAgentReady();
@@ -192,7 +229,7 @@
             content.innerHTML = `
                 <p class="text-green-400 mb-2">✓ Agent Ready</p>
                 <p class="text-sm text-gray-400">A2A endpoints active</p>
-                <a href="/.well-known/agent-card.json" class="text-blue-400 hover:text-blue-300 text-sm">
+                <a href="/agent.json" class="text-blue-400 hover:text-blue-300 text-sm">
                     → View Agent Card
                 </a>
             `;
@@ -205,17 +242,93 @@
             const result = await apiClient.registerTEE();
 
             if (result.success) {
-                UIUtils.showToast('TEE verified successfully!', 'success');
-                checkTEE();
+                const data = result.data;
+
+                // Store tx_hash if present (not for already_registered case)
+                if (data.tx_hash) {
+                    state.teeTx = data.tx_hash;
+
+                    // Show transaction link immediately
+                    const explorerUrl = data.explorer_url || (state.chainConfig
+                        ? UIUtils.getExplorerUrl(data.tx_hash, state.chainConfig.block_explorer_urls[0])
+                        : null);
+
+                    content.innerHTML = `
+                        <p class="text-yellow-400 mb-2">⏳ TEE Transaction Pending</p>
+                        <p class="text-sm text-gray-400 mb-1">TX: ${UIUtils.formatTxHash(data.tx_hash)}</p>
+                        ${explorerUrl ? `
+                            <a href="${explorerUrl}" target="_blank" rel="noopener noreferrer"
+                               class="text-blue-400 hover:text-blue-300 text-sm inline-block mb-2">
+                                → View on Explorer ↗
+                            </a>
+                        ` : ''}
+                        <p class="text-sm text-gray-500">Waiting for confirmation...</p>
+                    `;
+
+                    // Wait a moment for transaction to be mined, then check status
+                    setTimeout(() => {
+                        UIUtils.showToast('TEE verified successfully!', 'success');
+                        checkTEE();
+                    }, 3000);
+                } else {
+                    // Already registered case
+                    UIUtils.showToast('TEE verified successfully!', 'success');
+                    checkTEE();
+                }
             } else {
                 UIUtils.showError('step3-content', result.error, registerTEE);
                 UIUtils.showToast('TEE verification failed: ' + result.error, 'error');
             }
         }
 
+        async function pollTransactionStatus(txHash, options = {}) {
+            const {
+                initialDelay = 2000,
+                maxDelay = 10000,
+                maxAttempts = 30,
+                backoffFactor = 1.5,
+                onUpdate = null
+            } = options;
+
+            let delay = initialDelay;
+            let attempts = 0;
+
+            const poll = async () => {
+                if (attempts++ >= maxAttempts) {
+                    if (onUpdate) {
+                        onUpdate({ status: 'timeout', error: 'Transaction confirmation timeout. Please check explorer.' });
+                    }
+                    return null;
+                }
+
+                const result = await apiClient.getTransactionStatus(txHash);
+
+                if (result.success) {
+                    const data = result.data;
+
+                    if (data.confirmed) {
+                        // Transaction confirmed!
+                        return data;
+                    } else {
+                        // Still pending, update UI if callback provided
+                        if (onUpdate) {
+                            onUpdate({ status: 'pending', attempts });
+                        }
+                    }
+                }
+
+                // Continue polling with exponential backoff
+                delay = Math.min(delay * backoffFactor, maxDelay);
+                await new Promise(resolve => setTimeout(resolve, delay));
+                return poll();
+            };
+
+            return poll();
+        }
+
         async function register() {
             const content = document.getElementById('step2-content');
-            UIUtils.showLoading('step2-content', 'Registering on-chain...');
+            UIUtils.showLoading('step2-content', 'Broadcasting transaction...');
 
             const result = await apiClient.registerAgent();
 
@@ -223,14 +336,76 @@
 
             if (result.success) {
                 const data = result.data;
+                const txHash = data.tx_hash;
+
+                // Store tx_hash in state for persistence
+                state.registrationTx = txHash;
+
+                const explorerUrl = state.chainConfig
+                    ? UIUtils.getExplorerUrl(txHash, state.chainConfig.block_explorer_urls[0])
+                    : null;
+
+                // Show optimistic state with transaction link
                 content.innerHTML = `
-                    <p class="text-green-400 mb-2">✓ Registration Transaction Complete</p>
-                    <p class="text-sm text-gray-400">Agent ID: ${data.agent_id}</p>
-                    <p class="text-sm text-gray-400">Updating status...</p>
+                    <p class="text-yellow-400 mb-2">⏳ Transaction Pending</p>
+                    <p class="text-sm text-gray-400 mb-1">TX: ${UIUtils.formatTxHash(txHash)}</p>
+                    ${explorerUrl ? `
+                        <a href="${explorerUrl}" target="_blank" rel="noopener noreferrer"
+                           class="text-blue-400 hover:text-blue-300 text-sm inline-block mb-2">
+                            → View on Explorer ↗
+                        </a>
+                    ` : ''}
+                    <p class="text-sm text-gray-500" id="poll-status">Waiting for confirmation...</p>
                 `;
-                UIUtils.showToast('Agent registered successfully!', 'success');
-                // Wait for blockchain confirmation before checking
-                setTimeout(checkRegistration, 3000);
+                UIUtils.showToast('Transaction broadcast successfully!', 'info');
+
+                // Start polling with exponential backoff
+                const txStatus = await pollTransactionStatus(txHash, {
+                    onUpdate: (status) => {
+                        const pollStatus = document.getElementById('poll-status');
+                        if (pollStatus) {
+                            if (status.status === 'pending') {
+                                pollStatus.textContent = `Checking... (attempt ${status.attempts})`;
+                            }
+                        }
+                    }
+                });
+
+                if (txStatus && txStatus.success && txStatus.agent_id) {
+                    // Successfully confirmed!
+                    UIUtils.showToast('Agent registered successfully!', 'success');
+                    content.innerHTML = `
+                        <p class="text-green-400 mb-2">✓ Registration Confirmed</p>
+                        <p class="text-sm text-gray-400 mb-1">Agent ID: ${txStatus.agent_id}</p>
+                        <p class="text-sm text-gray-400 mb-1">TX: ${UIUtils.formatTxHash(txHash)}</p>
+                        ${explorerUrl ? `
+                            <a href="${explorerUrl}" target="_blank" rel="noopener noreferrer"
+                               class="text-blue-400 hover:text-blue-300 text-sm">
+                                → View on Explorer ↗
+                            </a>
+                        ` : ''}
+                    `;
+                    // Update registration status
+                    setTimeout(checkRegistration, 1000);
+                } else if (txStatus && txStatus.status === 'failed') {
+                    UIUtils.showError('step2-content', 'Transaction failed. Please try again.', register);
+                    UIUtils.showToast('Transaction failed!', 'error');
+                } else {
+                    // Timeout
+                    content.innerHTML = `
+                        <p class="text-yellow-400 mb-2">⏳ Transaction Still Pending</p>
+                        <p class="text-sm text-gray-400 mb-1">TX: ${UIUtils.formatTxHash(txHash)}</p>
+                        ${explorerUrl ? `
+                            <a href="${explorerUrl}" target="_blank" rel="noopener noreferrer"
+                               class="text-blue-400 hover:text-blue-300 text-sm inline-block mb-2">
+                                → View on Explorer ↗
+                            </a>
+                        ` : ''}
+                        <button onclick="checkRegistration()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm">
+                            Check Status
+                        </button>
+                    `;
+                }
             } else {
                 UIUtils.showError('step2-content', result.error, register);
                 UIUtils.showToast('Registration failed: ' + result.error, 'error');
