@@ -258,6 +258,17 @@ async def get_chain_config():
     return config
 
 
+@app.get("/api/trust-center-url")
+async def get_trust_center_url():
+    """Get trust center URL from environment."""
+    trust_center_url = os.getenv("TRUST_CENTER_URL", "")
+
+    if not trust_center_url:
+        raise HTTPException(status_code=404, detail="Trust center URL not configured")
+
+    return {"trust_center_url": trust_center_url}
+
+
 @app.get("/api/wallet")
 async def get_wallet():
     """Get wallet address and balance for funding."""

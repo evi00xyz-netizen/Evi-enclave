@@ -62,6 +62,7 @@ services:
       - GITHUB_REPO=${GITHUB_REPO:-https://github.com/Phala-Network/erc-8004-tee-agent.git}
       - GIT_COMMIT_HASH=${GIT_COMMIT_HASH:-HEAD}
       - UPDATE_CODE=${UPDATE_CODE:-false}
+      - TRUST_CENTER_URL=${TRUST_CENTER_URL:-https://trust.phala.com/widget/app/${DSTACK_APP_ID}}
 
       # Agent configuration
       - AGENT_DOMAIN=${DSTACK_APP_ID}-8000.${DSTACK_GATEWAY_DOMAIN}
