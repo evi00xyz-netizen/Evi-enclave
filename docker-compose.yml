@@ -75,6 +75,9 @@ services:
       - RPC_URL=${RPC_URL:-https://1rpc.io/sepolia}
       - CHAIN_ID=${CHAIN_ID:-11155111}
 
+      # Subgraph API Key (required for The Graph Gateway)
+      - SUBGRAPH_API_KEY=${SUBGRAPH_API_KEY}
+
       # Contract addresses (ETH Sepolia defaults)
       - IDENTITY_REGISTRY_ADDRESS=${IDENTITY_REGISTRY_ADDRESS:-0x8004A818BFB912233c491871b3d84c89A494BD9e}
       - REPUTATION_REGISTRY_ADDRESS=${REPUTATION_REGISTRY_ADDRESS:-0x8004B663056A597Dffe9eCcC1965A193B7388713}

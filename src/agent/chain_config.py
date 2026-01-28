@@ -30,12 +30,32 @@ class ChainConfig:
         return f"eip155:{self.chain_id}:{self.identity_registry}"
 
 
+# Subgraph ID for ERC-8004 on Sepolia
+SUBGRAPH_ID = "6wQRC7geo9XYAhckfmfo8kbMRLeWU8KQd3XsJqFKmZLT"
+
+
+def get_subgraph_url(api_key: str = None) -> str:
+    """
+    Get subgraph URL with optional API key.
+
+    The Graph Gateway requires an API key in the URL path:
+    https://gateway.thegraph.com/api/{api-key}/subgraphs/id/{subgraph-id}
+
+    If no API key is provided, returns URL that will fail with auth error.
+    """
+    api_key = api_key or os.getenv("SUBGRAPH_API_KEY", "")
+    if api_key:
+        return f"https://gateway.thegraph.com/api/{api_key}/subgraphs/id/{SUBGRAPH_ID}"
+    # Fallback URL without API key (will fail with auth error)
+    return f"https://gateway.thegraph.com/api/subgraphs/id/{SUBGRAPH_ID}"
+
+
 # Chain configurations - add new chains here
 CHAIN_CONFIGS: Dict[str, ChainConfig] = {
     "eth-sepolia": ChainConfig(
         chain_id=11155111,
         rpc_url="https://1rpc.io/sepolia",
-        subgraph_url="https://gateway.thegraph.com/api/subgraphs/id/6wQRC7geo9XYAhckfmfo8kbMRLeWU8KQd3XsJqFKmZLT",
+        subgraph_url=get_subgraph_url(),  # Will use SUBGRAPH_API_KEY env var
         identity_registry="0x8004A818BFB912233c491871b3d84c89A494BD9e",
         reputation_registry="0x8004B663056A597Dffe9eCcC1965A193B7388713",
         tee_registry="0x034675a9541445087Cd73B2120d6c8AF7F2056E3",
