@@ -223,22 +223,27 @@
             checkTEE();
         }
 
+        // Track TEE polling interval
+        let teePollingInterval = null;
+
         async function checkTEE() {
             const step4 = document.getElementById('step4');
             const content = document.getElementById('step4-content');
             const status = document.getElementById('step4-status');
 
-            const result = await apiClient.getStatus();
+            // First check if already verified
+            const statusResult = await apiClient.getStatus();
 
-            if (!result.success) {
-                UIUtils.showError('step4-content', result.error, checkTEE);
+            if (!statusResult.success) {
+                UIUtils.showError('step4-content', statusResult.error, checkTEE);
                 return;
             }
 
-            const data = result.data;
+            const agentData = statusResult.data;
 
-            if (data.agent.tee_verified) {
+            if (agentData.agent.tee_verified) {
                 // Already verified - show checkmark
+                clearTEEPolling();
                 step4.className = 'bg-gray-800 rounded-lg p-6';
                 status.className = 'w-8 h-8 rounded-full bg-green-600 flex items-center justify-center';
                 status.innerHTML = '✓';
@@ -255,18 +260,139 @@
 
                 content.innerHTML = `
                     <p class="text-green-400 mb-2">✓ TEE Verified</p>
-                    <p class="text-sm text-gray-400">Agent ID: ${data.agent.agent_id}</p>
+                    <p class="text-sm text-gray-400">Agent ID: ${agentData.agent.agent_id}</p>
                     ${txLinkHtml}
                 `;
                 document.getElementById('step5').classList.remove('opacity-50');
                 markAgentReady();
-            } else {
-                content.innerHTML = `
-                    <button onclick="registerTEE()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">
-                        Verify TEE
-                    </button>
-                `;
+                return;
             }
+
+            // Not verified - check TEE preparation status
+            const teeResult = await apiClient.getTEEStatus();
+
+            if (!teeResult.success) {
+                UIUtils.showError('step4-content', teeResult.error, checkTEE);
+                return;
+            }
+
+            const teeStatus = teeResult.data;
+            renderTEEStatus(teeStatus);
+        }
+
+        function renderTEEStatus(teeStatus) {
+            const content = document.getElementById('step4-content');
+
+            switch (teeStatus.state) {
+                case 'ready':
+                    // Proof is cached and ready - show fast submit button
+                    clearTEEPolling();
+                    const expiresText = teeStatus.expires_in > 0
+                        ? `Expires in ${Math.floor(teeStatus.expires_in / 60)}m ${teeStatus.expires_in % 60}s`
+                        : '';
+                    content.innerHTML = `
+                        <p class="text-green-400 mb-2">✓ Proof Ready</p>
+                        <p class="text-sm text-gray-400 mb-3">${expiresText}</p>
+                        <button onclick="registerTEE()" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded">
+                            Submit TEE Verification
+                        </button>
+                    `;
+                    break;
+
+                case 'preparing':
+                    // Show progress with elapsed time
+                    content.innerHTML = `
+                        <div class="flex items-center gap-3 mb-3">
+                            <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-400"></div>
+                            <p class="text-yellow-400">Preparing TEE attestation... (${teeStatus.elapsed_seconds || 0}s)</p>
+                        </div>
+                        <p class="text-sm text-gray-400 mb-3">This typically takes 20-30 seconds.</p>
+                        <button disabled class="bg-gray-600 px-4 py-2 rounded cursor-not-allowed opacity-50">
+                            Please wait...
+                        </button>
+                    `;
+                    // Start polling if not already
+                    startTEEPolling();
+                    break;
+
+                case 'error':
+                    // Show error with retry button
+                    clearTEEPolling();
+                    content.innerHTML = `
+                        <p class="text-red-400 mb-2">✗ Preparation Failed</p>
+                        <p class="text-sm text-gray-400 mb-3">${teeStatus.error || 'Unknown error occurred'}</p>
+                        <button onclick="retryTEEPreparation()" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded">
+                            Retry Preparation
+                        </button>
+                    `;
+                    break;
+
+                case 'idle':
+                default:
+                    // No preparation started - show verify button (starts full flow)
+                    clearTEEPolling();
+                    content.innerHTML = `
+                        <p class="text-sm text-gray-400 mb-3">TEE attestation not yet prepared.</p>
+                        <button onclick="startTEEPreparation()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded mr-2">
+                            Prepare TEE
+                        </button>
+                        <button onclick="registerTEE()" class="bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded">
+                            Verify TEE (Full Flow)
+                        </button>
+                    `;
+                    break;
+            }
+        }
+
+        function startTEEPolling() {
+            if (teePollingInterval) return; // Already polling
+            teePollingInterval = setInterval(async () => {
+                const result = await apiClient.getTEEStatus();
+                if (result.success) {
+                    renderTEEStatus(result.data);
+                    // If state changed to ready or error, checkTEE will clear polling
+                    if (result.data.state === 'ready') {
+                        clearTEEPolling();
+                    }
+                }
+            }, 3000);
+        }
+
+        function clearTEEPolling() {
+            if (teePollingInterval) {
+                clearInterval(teePollingInterval);
+                teePollingInterval = null;
+            }
+        }
+
+        async function startTEEPreparation() {
+            const content = document.getElementById('step4-content');
+            content.innerHTML = `
+                <div class="flex items-center gap-3 mb-3">
+                    <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-400"></div>
+                    <p class="text-yellow-400">Starting TEE preparation...</p>
+                </div>
+            `;
+
+            const result = await apiClient.prepareTEE();
+
+            if (result.success) {
+                // Start polling for status updates
+                startTEEPolling();
+                // Immediately render current status
+                const statusResult = await apiClient.getTEEStatus();
+                if (statusResult.success) {
+                    renderTEEStatus(statusResult.data);
+                }
+            } else {
+                UIUtils.showError('step4-content', result.error, startTEEPreparation);
+                UIUtils.showToast('TEE preparation failed: ' + result.error, 'error');
+            }
+        }
+
+        async function retryTEEPreparation() {
+            // Same as startTEEPreparation
+            await startTEEPreparation();
         }
 
         function markAgentReady() {
