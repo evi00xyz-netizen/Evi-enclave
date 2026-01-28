@@ -9,6 +9,7 @@ Demonstrates TEE-derived key signing without requiring on-chain registration.
 import sys
 import os
 import asyncio
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -31,6 +32,8 @@ from src.templates.server_agent import ServerAgent
 from src.agent.tee_auth import TEEAuthenticator
 from src.agent.tee_verifier import TEEVerifier
 from src.agent.chain_config import get_chain_config_from_env, log_chain_config
+from src.agent.session_store import SessionStore
+from src.agent.chat_agent import ChatAgent, INITIAL_GREETING
 
 
 # Request/Response Models
@@ -43,6 +46,17 @@ class TaskRequest(BaseModel):
     query: str
     data: Optional[Dict[str, Any]] = None
     parameters: Optional[Dict[str, Any]] = None
+
+
+class ChatRequest(BaseModel):
+    session_id: Optional[str] = None
+    message: str
+
+
+class QuickActionRequest(BaseModel):
+    session_id: Optional[str] = None
+    tool: str
+    arguments: Dict[str, Any] = {}
 
 
 # Initialize FastAPI
@@ -60,6 +74,9 @@ app.mount("/static", StaticFiles(directory=static_path), name="static")
 agent: Optional[ServerAgent] = None
 tee_auth: Optional[TEEAuthenticator] = None
 tee_verifier: Optional[TEEVerifier] = None
+
+# Chat interface components
+session_store: Optional[SessionStore] = None
 
 # TEE Preparation State
 tee_preparation = {
@@ -241,6 +258,13 @@ async def startup_event():
     # Generate agent card
     print("\n📋 Generating agent card...")
     agent_card = await agent._create_agent_card()
+
+    # Initialize chat components
+    global session_store
+    timeout_minutes = int(os.getenv("SESSION_TIMEOUT_MINUTES", "60"))
+    max_sessions = int(os.getenv("MAX_SESSIONS", "100"))
+    session_store = SessionStore(timeout_minutes=timeout_minutes, max_sessions=max_sessions)
+    print(f"\n💬 Chat session store initialized (timeout: {timeout_minutes}m, max: {max_sessions})")
 
     print("\n" + "=" * 80)
     print("✅ AGENT SERVER READY")
@@ -1040,6 +1064,325 @@ async def execute_task(task_id: str, request: Dict[str, Any]):
             "error": str(e)
         })
 
+
+# =============================================================================
+# CHAT INTERFACE ENDPOINTS
+# =============================================================================
+
+@app.post("/api/chat")
+async def chat_endpoint(request: ChatRequest):
+    """Send a message to the chat agent."""
+    global session_store, agent, tee_auth, tee_verifier
+
+    if not agent:
+        raise HTTPException(status_code=503, detail="Agent not initialized")
+
+    if not session_store:
+        raise HTTPException(status_code=503, detail="Session store not initialized")
+
+    # Get or create session
+    session = session_store.get_or_create(request.session_id)
+
+    # Build agent context
+    agent_address = await agent._get_agent_address()
+    chain_configs = {
+        84532: "Base Sepolia",
+        8453: "Base Mainnet",
+        11155111: "Ethereum Sepolia",
+        1: "Ethereum Mainnet"
+    }
+
+    tee_status = "Pending"
+    if tee_verifier and agent.agent_id:
+        if await tee_verifier.check_tee_registered(agent.agent_id, agent_address):
+            tee_status = "Verified"
+
+    agent_context = {
+        "agent_id": agent.agent_id or "Not registered",
+        "wallet_address": agent_address,
+        "chain_name": chain_configs.get(agent.config.chain_id, f"Chain {agent.config.chain_id}"),
+        "chain_id": agent.config.chain_id,
+        "tee_status": tee_status
+    }
+
+    # Build tool handlers
+    tool_handlers = {
+        "get_wallet_info": _handle_get_wallet_info,
+        "sign_message": _handle_sign_message,
+        "verify_signature": _handle_verify_signature,
+        "generate_attestation": _handle_generate_attestation,
+        "get_agent_card": _handle_get_agent_card,
+        "get_registration_status": _handle_get_registration_status,
+        "get_chain_config": _handle_get_chain_config,
+        "get_reputation": _handle_get_reputation,
+        "submit_feedback": _handle_submit_feedback,
+    }
+
+    # Create chat agent for this request
+    chat_agent = ChatAgent(agent_context, tool_handlers)
+
+    try:
+        response_text, tool_calls = await chat_agent.chat(session, request.message)
+
+        return {
+            "session_id": session.id,
+            "response": response_text,
+            "tool_calls": tool_calls if tool_calls else None
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")
+
+
+@app.post("/api/quick-action")
+async def quick_action_endpoint(request: QuickActionRequest):
+    """Execute a tool directly without LLM."""
+    global session_store, agent
+
+    if not agent:
+        raise HTTPException(status_code=503, detail="Agent not initialized")
+
+    if not session_store:
+        raise HTTPException(status_code=503, detail="Session store not initialized")
+
+    # Get or create session
+    session = session_store.get_or_create(request.session_id)
+
+    # Map tool names to handlers
+    tool_map = {
+        "get_wallet_info": _handle_get_wallet_info,
+        "get_agent_card": _handle_get_agent_card,
+        "generate_attestation": _handle_generate_attestation,
+        "get_registration_status": _handle_get_registration_status,
+        "get_reputation": _handle_get_reputation,
+    }
+
+    handler = tool_map.get(request.tool)
+    if not handler:
+        raise HTTPException(status_code=400, detail=f"Unknown tool: {request.tool}")
+
+    try:
+        result = await handler(request.arguments)
+
+        # Format as chat message
+        formatted = f"**{request.tool}**\n```json\n{json.dumps(result, indent=2)}\n```"
+
+        # Add to session history
+        session.add_message("user", f"[Quick Action: {request.tool}]")
+        session.add_message("assistant", formatted, [{"tool": request.tool, "result": result}])
+
+        return {
+            "session_id": session.id,
+            "response": formatted,
+            "tool_calls": [{"tool": request.tool, "result": result}]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Tool error: {str(e)}")
+
+
+@app.post("/api/session/new")
+async def new_session():
+    """Create a new chat session."""
+    global session_store
+
+    if not session_store:
+        raise HTTPException(status_code=503, detail="Session store not initialized")
+
+    session_id = session_store.create()
+    return {
+        "session_id": session_id,
+        "greeting": INITIAL_GREETING
+    }
+
+
+@app.get("/api/session/{session_id}/history")
+async def get_session_history(session_id: str):
+    """Get message history for a session."""
+    global session_store
+
+    if not session_store:
+        raise HTTPException(status_code=503, detail="Session store not initialized")
+
+    session = session_store.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return {
+        "session_id": session_id,
+        "messages": [
+            {
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat(),
+                "tool_calls": msg.tool_calls
+            }
+            for msg in session.messages
+        ]
+    }
+
+
+@app.delete("/api/session/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a session."""
+    global session_store
+
+    if not session_store:
+        raise HTTPException(status_code=503, detail="Session store not initialized")
+
+    deleted = session_store.delete(session_id)
+    return {"deleted": deleted}
+
+
+# =============================================================================
+# CHAT TOOL HANDLERS
+# =============================================================================
+
+async def _handle_get_wallet_info(args: dict) -> dict:
+    """Handle get_wallet_info tool."""
+    agent_address = await agent._get_agent_address()
+    balance_wei = agent._registry_client.w3.eth.get_balance(agent_address)
+    balance_eth = agent._registry_client.w3.from_wei(balance_wei, 'ether')
+
+    chain_configs = {
+        84532: "Base Sepolia",
+        8453: "Base Mainnet",
+        11155111: "Ethereum Sepolia",
+        1: "Ethereum Mainnet"
+    }
+
+    return {
+        "address": agent_address,
+        "balance": str(balance_eth),
+        "balance_wei": str(balance_wei),
+        "chain": chain_configs.get(agent.config.chain_id, f"Chain {agent.config.chain_id}"),
+        "chain_id": agent.config.chain_id
+    }
+
+
+async def _handle_sign_message(args: dict) -> dict:
+    """Handle sign_message tool."""
+    message = args.get("message", "")
+    signable_message = encode_defunct(text=message)
+    signed = tee_auth.account.sign_message(signable_message)
+
+    return {
+        "message": message,
+        "signature": signed.signature.hex(),
+        "signer": await agent._get_agent_address()
+    }
+
+
+async def _handle_verify_signature(args: dict) -> dict:
+    """Handle verify_signature tool."""
+    from eth_account import Account
+
+    message = args.get("message", "")
+    signature = args.get("signature", "")
+    expected_address = args.get("address", "")
+
+    try:
+        signable_message = encode_defunct(text=message)
+        recovered = Account.recover_message(signable_message, signature=signature)
+        is_valid = recovered.lower() == expected_address.lower()
+        return {
+            "valid": is_valid,
+            "recovered_address": recovered,
+            "expected_address": expected_address
+        }
+    except Exception as e:
+        return {"valid": False, "error": str(e)}
+
+
+async def _handle_generate_attestation(args: dict) -> dict:
+    """Handle generate_attestation tool."""
+    attestation = await tee_auth.get_attestation()
+
+    if "error" in attestation:
+        return {"error": attestation["error"]}
+
+    return {
+        "quote_size": len(attestation.get("quote", "")),
+        "has_event_log": "event_log" in attestation,
+        "timestamp": datetime.utcnow().isoformat(),
+        "user_data": args.get("user_data", "")
+    }
+
+
+async def _handle_get_agent_card(args: dict) -> dict:
+    """Handle get_agent_card tool."""
+    return await agent._create_agent_card()
+
+
+async def _handle_get_registration_status(args: dict) -> dict:
+    """Handle get_registration_status tool."""
+    agent_address = await agent._get_agent_address()
+    tee_verified = False
+
+    if tee_verifier and agent.agent_id:
+        tee_verified = await tee_verifier.check_tee_registered(agent.agent_id, agent_address)
+
+    return {
+        "identity": {
+            "registered": agent.is_registered,
+            "agent_id": agent.agent_id
+        },
+        "tee": {
+            "verified": tee_verified
+        }
+    }
+
+
+async def _handle_get_chain_config(args: dict) -> dict:
+    """Handle get_chain_config tool."""
+    chain_config = get_chain_config_from_env()
+
+    return {
+        "chain_id": chain_config.chain_id,
+        "rpc_url": chain_config.rpc_url,
+        "contracts": {
+            "identity_registry": chain_config.identity_registry,
+            "reputation_registry": chain_config.reputation_registry,
+            "tee_verifier": chain_config.tee_verifier
+        }
+    }
+
+
+async def _handle_get_reputation(args: dict) -> dict:
+    """Handle get_reputation tool."""
+    target_id = args.get("agent_id") or agent.agent_id
+
+    if not target_id:
+        return {"error": "No agent ID specified and agent not registered"}
+
+    try:
+        reputation = await agent._registry_client.get_reputation(target_id)
+        return {
+            "agent_id": target_id,
+            "reputation": reputation
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _handle_submit_feedback(args: dict) -> dict:
+    """Handle submit_feedback tool."""
+    try:
+        result = await agent._registry_client.give_feedback(
+            agent_id=args["target_agent_id"],
+            value=args["value"],
+            tag=args["tag"],
+            comment=args.get("comment", "")
+        )
+        return {
+            "success": True,
+            "tx_hash": result.get("tx_hash")
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# =============================================================================
+# HEALTH CHECK
+# =============================================================================
 
 @app.get("/health")
 async def health_check():
