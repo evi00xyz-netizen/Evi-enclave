@@ -197,18 +197,21 @@
             }
 
             const data = result.data;
+            const rep = data.reputation || {};
+            const feedbackCount = rep.feedbackCount || 0;
+            const avgScore = rep.averageScore || 0;
 
             // Mark step as complete
             step3.className = 'bg-gray-800 rounded-lg p-6';
             status.className = 'w-8 h-8 rounded-full bg-green-600 flex items-center justify-center';
             status.innerHTML = '✓';
 
-            if (data.feedback_count > 0) {
+            if (feedbackCount > 0) {
                 // Has reputation data
                 content.innerHTML = `
                     <p class="text-green-400 mb-2">✓ Reputation Active</p>
-                    <p class="text-sm text-gray-400">Average Score: ${data.average_score}/100</p>
-                    <p class="text-sm text-gray-400">Feedback Count: ${data.feedback_count}</p>
+                    <p class="text-sm text-gray-400">Average Score: ${avgScore}/100</p>
+                    <p class="text-sm text-gray-400">Feedback Count: ${feedbackCount}</p>
                 `;
             } else {
                 // No feedback yet
