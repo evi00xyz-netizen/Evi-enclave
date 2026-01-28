@@ -3,1276 +3,249 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TEE Agent - Developer API</title>
+    <title>TEE Agent - Chat Interface</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/chat.css">
     <script src="/static/wallet-utils.js"></script>
     <script src="/static/trust-center.js"></script>
+    <script src="/static/chat.js"></script>
 </head>
 <body class="bg-gray-900 text-white">
-    <div class="container mx-auto px-4 py-8 max-w-7xl">
+    <div class="container mx-auto px-4 py-8 max-w-4xl">
         <!-- Header -->
-        <div class="mb-8">
+        <div class="mb-6">
             <div class="flex items-center justify-between mb-4">
-                <h1 class="text-4xl font-bold">Developer API Playground</h1>
+                <h1 class="text-3xl font-bold">🤖 TEE Agent Chat</h1>
                 <div class="flex gap-2">
-                    <a href="/funding" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">Funding</a>
-                    <a href="/dashboard" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">Dashboard</a>
+                    <button onclick="startNewSession()" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm">
+                        New Session
+                    </button>
+                    <a href="/funding" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm">Funding</a>
+                    <a href="/dashboard" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm">Dashboard</a>
                 </div>
             </div>
-            <p class="text-gray-400">Test and interact with the TEE Agent API endpoints</p>
+            <p class="text-gray-400">Chat with your TEE agent running in a secure enclave</p>
         </div>
 
-        <!-- Agent Status Card -->
-        <div class="bg-gray-800 rounded-lg p-6 mb-6">
-            <h2 class="text-2xl font-bold mb-4">Agent Status</h2>
-            <div id="agentStatus" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <!-- Agent Status Card (Collapsed) -->
+        <div id="agentStatusCollapsed" class="agent-status-collapsed mb-4" onclick="toggleStatusExpanded()">
+            <div id="statusIndicators" class="flex gap-4 flex-wrap">
+                <div class="status-item">
+                    <div class="status-indicator" id="statusDot"></div>
+                    <span id="statusText">Loading...</span>
+                </div>
+            </div>
+            <span class="text-gray-400 text-sm ml-auto">Click for details ▼</span>
+        </div>
+
+        <!-- Agent Status Expanded (Hidden by default) -->
+        <div id="agentStatusExpanded" class="bg-gray-800 rounded-lg p-6 mb-6 hidden">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold">Agent Status</h2>
+                <button onclick="toggleStatusExpanded()" class="text-gray-400 hover:text-white">✕</button>
+            </div>
+            <div id="agentStatusDetails" class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div class="text-center py-4">
                     <div class="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mx-auto"></div>
                 </div>
             </div>
         </div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <!-- Left Column - API Endpoints -->
-            <div class="space-y-6">
-                <!-- Get Wallet Info -->
-                <div class="bg-gray-800 rounded-lg p-6">
-                    <h3 class="text-xl font-bold mb-3 flex items-center gap-2">
-                        <span class="bg-blue-600 px-2 py-1 rounded text-xs">GET</span>
-                        Wallet Info
-                    </h3>
-                    <p class="text-sm text-gray-400 mb-4">Get agent wallet address and balance</p>
-                    <button onclick="getWallet()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded w-full">
-                        Get Wallet
-                    </button>
-                </div>
-
-                <!-- Sign Message -->
-                <div class="bg-gray-800 rounded-lg p-6">
-                    <h3 class="text-xl font-bold mb-3 flex items-center gap-2">
-                        <span class="bg-green-600 px-2 py-1 rounded text-xs">POST</span>
-                        Sign Message
-                    </h3>
-                    <p class="text-sm text-gray-400 mb-4">Sign a message with TEE-derived key</p>
-                    <textarea
-                        id="signMessage"
-                        placeholder="Enter message to sign..."
-                        class="w-full bg-gray-700 text-white p-3 rounded mb-3 h-24"
-                    ></textarea>
-                    <button onclick="signMessage()" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded w-full">
-                        Sign Message
-                    </button>
-                </div>
-
-                <!-- Process Task -->
-                <div class="bg-gray-800 rounded-lg p-6">
-                    <h3 class="text-xl font-bold mb-3 flex items-center gap-2">
-                        <span class="bg-green-600 px-2 py-1 rounded text-xs">POST</span>
-                        Process Task
-                    </h3>
-                    <p class="text-sm text-gray-400 mb-4">Send a task to the agent</p>
-                    <input
-                        type="text"
-                        id="taskId"
-                        placeholder="Task ID (auto-generated if empty)"
-                        class="w-full bg-gray-700 text-white p-3 rounded mb-2"
-                    />
-                    <textarea
-                        id="taskQuery"
-                        placeholder="Enter your query..."
-                        class="w-full bg-gray-700 text-white p-3 rounded mb-3 h-24"
-                    ></textarea>
-                    <button onclick="processTask()" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded w-full">
-                        Process Task
-                    </button>
-                </div>
-
-                <!-- Get Agent Card -->
-                <div class="bg-gray-800 rounded-lg p-6">
-                    <h3 class="text-xl font-bold mb-3 flex items-center gap-2">
-                        <span class="bg-blue-600 px-2 py-1 rounded text-xs">GET</span>
-                        Agent Card
-                    </h3>
-                    <p class="text-sm text-gray-400 mb-4">Get ERC-8004 compliant agent card</p>
-                    <button onclick="getAgentCard()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded w-full">
-                        Get Agent Card
-                    </button>
-                </div>
-
-                <!-- Get Attestation -->
-                <div class="bg-gray-800 rounded-lg p-6">
-                    <h3 class="text-xl font-bold mb-3 flex items-center gap-2">
-                        <span class="bg-blue-600 px-2 py-1 rounded text-xs">GET</span>
-                        TEE Attestation
-                    </h3>
-                    <p class="text-sm text-gray-400 mb-4">Get TEE attestation information</p>
-                    <button onclick="getAttestation()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded w-full">
-                        Get Attestation
-                    </button>
-                </div>
-
-                <!-- AI Code Generation (NEW) -->
-                <div class="bg-gradient-to-br from-purple-900 to-gray-800 rounded-lg p-6 border border-purple-700">
-                    <h3 class="text-xl font-bold mb-3 flex items-center gap-2">
-                        <span class="bg-purple-600 px-2 py-1 rounded text-xs">AI</span>
-                        Generate & Execute Code
-                    </h3>
-                    <p class="text-sm text-gray-400 mb-4">Use AI to generate code from natural language (with TEE attestation)</p>
-
-                    <!-- Language Selector -->
-                    <select id="aiLanguage" class="w-full bg-gray-700 text-white p-3 rounded mb-2">
-                        <option value="python">Python</option>
-                        <option value="javascript">JavaScript</option>
-                    </select>
-
-                    <!-- Description -->
-                    <textarea
-                        id="aiDescription"
-                        placeholder="Describe what you want the code to do... (e.g., 'Calculate the factorial of 10 and print the result')"
-                        class="w-full bg-gray-700 text-white p-3 rounded mb-2 h-32"
-                    ></textarea>
-
-                    <!-- Advanced Options (Collapsible) -->
-                    <details class="mb-3">
-                        <summary class="text-sm text-purple-400 cursor-pointer mb-2">Advanced Options</summary>
-                        <div class="bg-gray-700 p-3 rounded space-y-2">
-                            <label class="flex items-center gap-2 text-sm">
-                                <input type="checkbox" id="aiAttestation" checked class="rounded">
-                                Include TEE Attestation
-                            </label>
-                            <div>
-                                <label class="text-sm text-gray-400">Max Retries</label>
-                                <input type="number" id="aiRetries" value="2" min="0" max="5" class="w-full bg-gray-600 text-white p-2 rounded text-sm">
-                            </div>
-                        </div>
-                    </details>
-
-                    <button onclick="generateCode()" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded w-full font-bold">
-                        🤖 Generate & Execute
-                    </button>
-                </div>
-
-                <!-- MCP Sandbox Control (NEW) -->
-                <div class="bg-gradient-to-br from-blue-900 to-gray-800 rounded-lg p-6 border border-blue-700">
-                    <h3 class="text-xl font-bold mb-3 flex items-center gap-2">
-                        <span class="bg-blue-600 px-2 py-1 rounded text-xs">MCP</span>
-                        Sandbox Control (AI)
-                    </h3>
-                    <p class="text-sm text-gray-400 mb-4">Use natural language to control sandbox via MCP tools (with TEE attestation)</p>
-
-                    <!-- Quick Actions -->
-                    <div class="flex gap-3 mb-3 text-sm">
-                        <button onclick="toolBrowser.open()" class="text-blue-400 hover:text-blue-300 flex items-center gap-1">
-                            🔍 Browse Tools
-                        </button>
-                        <span class="text-gray-600">•</span>
-                        <button onclick="showMCPHelp()" class="text-blue-400 hover:text-blue-300 flex items-center gap-1">
-                            ❓ Help
-                        </button>
-                    </div>
-
-                    <!-- Natural Language Input -->
-                    <textarea
-                        id="mcpDescription"
-                        placeholder="Describe what you want to do... (e.g., 'List all Python files in /home' or 'Execute test.py')"
-                        class="w-full bg-gray-700 text-white p-3 rounded mb-2 h-24"
-                    ></textarea>
-
-                    <!-- Advanced Options (Collapsible) -->
-                    <details class="mb-3">
-                        <summary class="text-sm text-blue-400 cursor-pointer mb-2">Advanced Options</summary>
-                        <div class="bg-gray-700 p-3 rounded space-y-2">
-                            <label class="flex items-center gap-2 text-sm">
-                                <input type="checkbox" id="mcpAttestation" checked class="rounded">
-                                Include TEE Attestation
-                            </label>
-                            <label class="flex items-center gap-2 text-sm">
-                                <input type="checkbox" id="mcpShowCall" checked class="rounded">
-                                Show Generated MCP Call
-                            </label>
-                            <label class="flex items-center gap-2 text-sm">
-                                <input type="checkbox" id="mcpConfirmDangerous" checked class="rounded">
-                                Confirm Dangerous Operations
-                            </label>
-                        </div>
-                    </details>
-
-                    <button onclick="executeMCPControl()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded w-full font-bold">
-                        🔧 Generate & Execute MCP Call
-                    </button>
-                </div>
-            </div>
-
-            <!-- Right Column - Response -->
-            <div class="bg-gray-800 rounded-lg p-6">
-                <div class="flex items-center justify-between mb-4">
-                    <h3 class="text-xl font-bold">API Response</h3>
-                    <button onclick="clearResponse()" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm">
-                        Clear
-                    </button>
-                </div>
-                <div id="response" class="bg-gray-900 p-4 rounded overflow-auto" style="max-height: calc(100vh - 200px);">
-                    <p class="text-gray-500 italic">Response will appear here...</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Code Examples -->
-        <div class="mt-6 bg-gray-800 rounded-lg p-6">
-            <h2 class="text-2xl font-bold mb-4">API Documentation</h2>
-            <div class="space-y-4">
-                <div>
-                    <h4 class="text-lg font-bold text-blue-400 mb-2">GET /api/wallet</h4>
-                    <pre class="bg-gray-900 p-4 rounded text-sm overflow-x-auto"><code>curl http://localhost:8000/api/wallet</code></pre>
-                </div>
-                <div>
-                    <h4 class="text-lg font-bold text-green-400 mb-2">POST /api/sign</h4>
-                    <pre class="bg-gray-900 p-4 rounded text-sm overflow-x-auto"><code>curl -X POST http://localhost:8000/api/sign \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Hello World"}'</code></pre>
-                </div>
-                <div>
-                    <h4 class="text-lg font-bold text-green-400 mb-2">POST /api/process</h4>
-                    <pre class="bg-gray-900 p-4 rounded text-sm overflow-x-auto"><code>curl -X POST http://localhost:8000/api/process \
-  -H "Content-Type: application/json" \
-  -d '{"task_id": "task-1", "query": "Analyze this data", "data": {}}'</code></pre>
-                </div>
-                <div>
-                    <h4 class="text-lg font-bold text-blue-400 mb-2">GET /api/card</h4>
-                    <pre class="bg-gray-900 p-4 rounded text-sm overflow-x-auto"><code>curl http://localhost:8000/api/card</code></pre>
-                </div>
-                <div>
-                    <h4 class="text-lg font-bold text-blue-400 mb-2">GET /.well-known/agent-card.json</h4>
-                    <pre class="bg-gray-900 p-4 rounded text-sm overflow-x-auto"><code>curl http://localhost:8000/.well-known/agent-card.json</code></pre>
-                </div>
-                <div>
-                    <h4 class="text-lg font-bold text-purple-400 mb-2">POST /api/process (AI Code Generation)</h4>
-                    <pre class="bg-gray-900 p-4 rounded text-sm overflow-x-auto"><code>curl -X POST http://localhost:8000/api/process \
-  -H "Content-Type: application/json" \
-  -d '{
-    "task_id": "ai-gen-1",
-    "query": "Calculate factorial of 10",
-    "data": {
-      "type": "ai_generate_and_execute",
-      "description": "Calculate the factorial of 10 and print the result",
-      "language": "python",
-      "max_retries": 2,
-      "include_attestation": true
-    }
-  }'</code></pre>
-                </div>
-                <div>
-                    <h4 class="text-lg font-bold text-blue-400 mb-2">POST /api/process (MCP Sandbox Control)</h4>
-                    <pre class="bg-gray-900 p-4 rounded text-sm overflow-x-auto"><code>curl -X POST http://localhost:8000/api/process \
-  -H "Content-Type: application/json" \
-  -d '{
-    "task_id": "mcp-1",
-    "query": "List all Python files",
-    "data": {
-      "type": "ai_mcp_control",
-      "description": "List all Python files in /home",
-      "include_attestation": true,
-      "show_mcp_call": true,
-      "confirm_dangerous": true
-    }
-  }'</code></pre>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- MCP Tool Browser Modal -->
-    <div id="toolBrowserModal" class="hidden fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center p-4">
-        <div class="bg-gray-800 rounded-lg max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-            <!-- Modal Header -->
-            <div class="flex items-center justify-between p-6 border-b border-gray-700">
-                <div>
-                    <h2 class="text-2xl font-bold">MCP Tool Browser</h2>
-                    <p class="text-sm text-gray-400 mt-1">Explore available MCP tools for sandbox control</p>
-                </div>
-                <button onclick="toolBrowser.close()" class="text-gray-400 hover:text-white text-3xl leading-none">
-                    ×
-                </button>
-            </div>
-
-            <!-- Search & Filters -->
-            <div class="p-6 border-b border-gray-700">
-                <input
-                    type="text"
-                    id="toolSearch"
-                    placeholder="Search tools..."
-                    class="w-full bg-gray-700 text-white p-3 rounded mb-3"
-                    oninput="toolBrowser.applyFilters()"
-                />
-                <div class="flex flex-wrap gap-2">
-                    <button onclick="toolBrowser.filterByCategory('all')"
-                            class="filter-chip px-3 py-1 rounded bg-blue-600 text-white text-sm"
-                            data-category="all">
-                        All Tools
-                    </button>
-                    <button onclick="toolBrowser.filterByCategory('shell')"
-                            class="filter-chip px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 text-white text-sm"
-                            data-category="shell">
-                        💻 Shell
-                    </button>
-                    <button onclick="toolBrowser.filterByCategory('files')"
-                            class="filter-chip px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 text-white text-sm"
-                            data-category="files">
-                        📁 Files
-                    </button>
-                    <button onclick="toolBrowser.filterByCategory('execution')"
-                            class="filter-chip px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 text-white text-sm"
-                            data-category="execution">
-                        ⚡ Execution
-                    </button>
-                </div>
-            </div>
-
-            <!-- Tool Grid -->
-            <div id="toolGrid" class="flex-1 overflow-y-auto p-6">
-                <!-- Tools will be rendered here -->
-            </div>
-
-            <!-- Tool Detail Panel (hidden by default) -->
-            <div id="toolDetailPanel" class="hidden border-t border-gray-700 p-6 overflow-y-auto max-h-96">
-                <!-- Tool details will be rendered here -->
-            </div>
+        <!-- Chat Interface Container -->
+        <div id="chatContainer" class="bg-gray-800 rounded-lg overflow-hidden">
+            <!-- Chat will be rendered here by ChatUI -->
         </div>
     </div>
 
     <script>
         const apiClient = new APIClient();
-
+        let chatUI = null;
         let agentStatus = null;
+        let statusExpanded = false;
 
+        /**
+         * Helper to create a status item element safely
+         */
+        function createStatusItem(indicatorColor, text, isCode) {
+            const item = document.createElement('div');
+            item.className = 'status-item';
+
+            if (indicatorColor) {
+                const dot = document.createElement('div');
+                dot.className = 'status-indicator ' + indicatorColor;
+                item.appendChild(dot);
+            }
+
+            if (isCode) {
+                const label = document.createElement('span');
+                label.className = 'text-gray-400';
+                label.textContent = 'Address:';
+                item.appendChild(label);
+
+                const code = document.createElement('code');
+                code.className = 'text-sm';
+                code.textContent = text;
+                item.appendChild(code);
+            } else {
+                const span = document.createElement('span');
+                span.textContent = text;
+                item.appendChild(span);
+            }
+
+            return item;
+        }
+
+        /**
+         * Load agent status and update the collapsed status bar
+         */
         async function loadAgentStatus() {
-            const statusDiv = document.getElementById('agentStatus');
-
             const result = await apiClient.getStatus();
 
             if (result.success) {
                 agentStatus = result.data;
-                statusDiv.innerHTML = `
-                    <div class="bg-gray-700 p-4 rounded">
-                        <p class="text-sm text-gray-400">Address</p>
-                        <p class="font-mono text-sm">${agentStatus.agent.address}</p>
-                    </div>
-                    <div class="bg-gray-700 p-4 rounded">
-                        <p class="text-sm text-gray-400">Agent ID</p>
-                        <p class="font-mono">${agentStatus.agent.agent_id || 'Not registered'}</p>
-                    </div>
-                    <div class="bg-gray-700 p-4 rounded">
-                        <p class="text-sm text-gray-400">Status</p>
-                        <div class="flex items-center gap-2 mt-1">
-                            <div class="w-2 h-2 rounded-full ${agentStatus.agent.is_registered ? 'bg-green-500' : 'bg-yellow-500'}"></div>
-                            <span>${agentStatus.agent.is_registered ? 'Registered' : 'Not Registered'}</span>
-                        </div>
-                        ${agentStatus.agent.tee_verified ? '<div class="flex items-center gap-2 mt-1"><div class="w-2 h-2 rounded-full bg-green-500"></div><span>TEE Verified</span></div>' : ''}
-                    </div>
-                `;
+                updateStatusBar();
+                updateStatusDetails();
             } else {
-                statusDiv.innerHTML = `<p class="text-red-400 col-span-3">Failed to load status: ${result.error}</p>`;
+                const container = document.getElementById('statusIndicators');
+                while (container.firstChild) container.removeChild(container.firstChild);
+                const errorItem = document.createElement('div');
+                errorItem.className = 'status-item';
+                const errorSpan = document.createElement('span');
+                errorSpan.className = 'text-red-400';
+                errorSpan.textContent = 'Failed to load status';
+                errorItem.appendChild(errorSpan);
+                container.appendChild(errorItem);
             }
         }
 
-        function displayResponse(data, success = true) {
-            const responseDiv = document.getElementById('response');
-            const timestamp = new Date().toLocaleTimeString();
+        /**
+         * Update the collapsed status bar using safe DOM methods
+         */
+        function updateStatusBar() {
+            if (!agentStatus) return;
 
-            const color = success ? 'text-green-400' : 'text-red-400';
-            const statusText = success ? '✓ Success' : '❌ Error';
+            const agent = agentStatus.agent;
+            const isOnline = true;
+            const isRegistered = agent.is_registered;
+            const isTeeVerified = agent.tee_verified;
 
-            responseDiv.innerHTML = `
-                <div class="mb-2 flex items-center justify-between">
-                    <span class="${color} font-bold">${statusText}</span>
-                    <span class="text-gray-500 text-sm">${timestamp}</span>
-                </div>
-                <pre class="text-sm overflow-x-auto">${JSON.stringify(data, null, 2)}</pre>
-            `;
-        }
+            const shortAddress = agent.address
+                ? agent.address.substring(0, 6) + '...' + agent.address.substring(agent.address.length - 4)
+                : 'Unknown';
 
-        function clearResponse() {
-            document.getElementById('response').innerHTML = '<p class="text-gray-500 italic">Response will appear here...</p>';
-        }
+            const container = document.getElementById('statusIndicators');
+            while (container.firstChild) container.removeChild(container.firstChild);
 
-        async function getWallet() {
-            const result = await apiClient.getWallet();
+            container.appendChild(createStatusItem(isOnline ? 'green' : 'yellow', isOnline ? 'Online' : 'Offline', false));
+            container.appendChild(createStatusItem(null, shortAddress, true));
+            container.appendChild(createStatusItem(isRegistered ? 'green' : 'yellow', isRegistered ? 'Registered' : 'Unregistered', false));
 
-            if (result.success) {
-                displayResponse(result.data, true);
-                UIUtils.showToast('Wallet info loaded', 'success');
-            } else {
-                displayResponse({ error: result.error }, false);
-                UIUtils.showToast('Failed to get wallet: ' + result.error, 'error');
+            if (isTeeVerified) {
+                container.appendChild(createStatusItem('green', 'TEE Verified', false));
             }
         }
 
-        async function signMessage() {
-            const message = document.getElementById('signMessage').value.trim();
+        /**
+         * Update the expanded status details using safe DOM methods
+         */
+        function updateStatusDetails() {
+            if (!agentStatus) return;
 
-            if (!message) {
-                UIUtils.showToast('Please enter a message to sign', 'warning');
-                return;
+            const agent = agentStatus.agent;
+            const container = document.getElementById('agentStatusDetails');
+            while (container.firstChild) container.removeChild(container.firstChild);
+
+            // Address card
+            const addressCard = document.createElement('div');
+            addressCard.className = 'bg-gray-700 p-4 rounded';
+            const addressLabel = document.createElement('p');
+            addressLabel.className = 'text-sm text-gray-400';
+            addressLabel.textContent = 'Address';
+            const addressValue = document.createElement('p');
+            addressValue.className = 'font-mono text-sm break-all';
+            addressValue.textContent = agent.address;
+            addressCard.appendChild(addressLabel);
+            addressCard.appendChild(addressValue);
+
+            // Agent ID card
+            const idCard = document.createElement('div');
+            idCard.className = 'bg-gray-700 p-4 rounded';
+            const idLabel = document.createElement('p');
+            idLabel.className = 'text-sm text-gray-400';
+            idLabel.textContent = 'Agent ID';
+            const idValue = document.createElement('p');
+            idValue.className = 'font-mono';
+            idValue.textContent = agent.agent_id || 'Not registered';
+            idCard.appendChild(idLabel);
+            idCard.appendChild(idValue);
+
+            // Status card
+            const statusCard = document.createElement('div');
+            statusCard.className = 'bg-gray-700 p-4 rounded';
+            const statusLabel = document.createElement('p');
+            statusLabel.className = 'text-sm text-gray-400';
+            statusLabel.textContent = 'Status';
+
+            const regStatus = document.createElement('div');
+            regStatus.className = 'flex items-center gap-2 mt-1';
+            const regDot = document.createElement('div');
+            regDot.className = 'w-2 h-2 rounded-full ' + (agent.is_registered ? 'bg-green-500' : 'bg-yellow-500');
+            const regText = document.createElement('span');
+            regText.textContent = agent.is_registered ? 'Registered' : 'Not Registered';
+            regStatus.appendChild(regDot);
+            regStatus.appendChild(regText);
+
+            statusCard.appendChild(statusLabel);
+            statusCard.appendChild(regStatus);
+
+            if (agent.tee_verified) {
+                const teeStatus = document.createElement('div');
+                teeStatus.className = 'flex items-center gap-2 mt-1';
+                const teeDot = document.createElement('div');
+                teeDot.className = 'w-2 h-2 rounded-full bg-green-500';
+                const teeText = document.createElement('span');
+                teeText.textContent = 'TEE Verified';
+                teeStatus.appendChild(teeDot);
+                teeStatus.appendChild(teeText);
+                statusCard.appendChild(teeStatus);
             }
 
-            const result = await apiClient.signMessage(message);
-
-            if (result.success) {
-                displayResponse(result.data, true);
-                UIUtils.showToast('Message signed successfully', 'success');
-            } else {
-                displayResponse({ error: result.error }, false);
-                UIUtils.showToast('Failed to sign message: ' + result.error, 'error');
-            }
+            container.appendChild(addressCard);
+            container.appendChild(idCard);
+            container.appendChild(statusCard);
         }
 
-        async function processTask() {
-            const taskId = document.getElementById('taskId').value.trim() || 'task-' + Date.now();
-            const query = document.getElementById('taskQuery').value.trim();
-
-            if (!query) {
-                UIUtils.showToast('Please enter a query', 'warning');
-                return;
-            }
-
-            const result = await apiClient.processTask(taskId, query);
-
-            if (result.success) {
-                displayResponse(result.data, true);
-                UIUtils.showToast('Task processed successfully', 'success');
-            } else {
-                displayResponse({ error: result.error }, false);
-                UIUtils.showToast('Failed to process task: ' + result.error, 'error');
-            }
+        /**
+         * Toggle between collapsed and expanded status view
+         */
+        function toggleStatusExpanded() {
+            statusExpanded = !statusExpanded;
+            document.getElementById('agentStatusCollapsed').classList.toggle('hidden', statusExpanded);
+            document.getElementById('agentStatusExpanded').classList.toggle('hidden', !statusExpanded);
         }
 
-        async function getAgentCard() {
-            const result = await apiClient.getAgentCard();
-
-            if (result.success) {
-                displayResponse(result.data, true);
-                UIUtils.showToast('Agent card loaded', 'success');
-            } else {
-                displayResponse({ error: result.error }, false);
-                UIUtils.showToast('Failed to get agent card: ' + result.error, 'error');
-            }
-        }
-
-        async function getAttestation() {
-            const result = await apiClient.getAttestation();
-
-            if (result.success) {
-                displayResponse(result.data, true);
-                UIUtils.showToast('Attestation loaded', 'success');
-            } else {
-                displayResponse({ error: result.error }, false);
-                UIUtils.showToast('Failed to get attestation: ' + result.error, 'error');
-            }
-        }
-
-        async function generateCode() {
-            const description = document.getElementById('aiDescription').value.trim();
-            const language = document.getElementById('aiLanguage').value;
-            const includeAttestation = document.getElementById('aiAttestation').checked;
-            const maxRetries = parseInt(document.getElementById('aiRetries').value) || 2;
-
-            if (!description) {
-                UIUtils.showToast('Please describe what code you want to generate', 'warning');
-                return;
-            }
-
-            const taskId = 'ai-gen-' + Date.now();
-
-            UIUtils.showToast('Generating code with AI...', 'info');
-
-            const result = await apiClient.processTask(taskId, description, {
-                type: 'ai_generate_and_execute',
-                description: description,
-                language: language,
-                max_retries: maxRetries,
-                include_attestation: includeAttestation
-            });
-
-            if (result.success && result.data.success) {
-                displayAIResponse(result.data);
-                UIUtils.showToast('Code generated and executed successfully!', 'success');
-            } else {
-                const error = result.data?.error || result.error || 'Unknown error';
-                displayResponse(result.data || { error }, false);
-                UIUtils.showToast('Failed: ' + error, 'error');
-            }
-        }
-
-        function displayAIResponse(data) {
-            const responseDiv = document.getElementById('response');
-            const timestamp = new Date().toLocaleTimeString();
-
-            const hasAttestation = data.attestation && !data.attestation.error;
-            const retriesText = data.retries_used > 0 ? ` (${data.retries_used} retries)` : '';
-
-            responseDiv.innerHTML = `
-                <div class="mb-4">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-green-400 font-bold">✓ ${data.message}${retriesText}</span>
-                        <span class="text-gray-500 text-sm">${timestamp}</span>
-                    </div>
-                    ${hasAttestation ? '<span class="text-purple-400 text-xs">🔒 TEE Attested</span>' : ''}
-                </div>
-
-                <!-- Generated Code -->
-                <div class="mb-4">
-                    <div class="flex items-center justify-between mb-2">
-                        <h4 class="text-sm font-bold text-purple-400">Generated Code (${data.language})</h4>
-                        <button onclick="copyCode()" class="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded">
-                            Copy
-                        </button>
-                    </div>
-                    <pre id="generatedCode" class="bg-gray-950 p-3 rounded text-sm overflow-x-auto border border-gray-700"><code>${escapeHtml(data.generated_code)}</code></pre>
-                </div>
-
-                <!-- Output -->
-                <div class="mb-4">
-                    <h4 class="text-sm font-bold text-green-400 mb-2">Execution Output</h4>
-                    <pre class="bg-gray-950 p-3 rounded text-sm overflow-x-auto border border-gray-700">${escapeHtml(data.output || '(no output)')}</pre>
-                    ${data.result ? `<div class="mt-2"><span class="text-xs text-gray-400">Return Value:</span> <code class="text-blue-400">${escapeHtml(String(data.result))}</code></div>` : ''}
-                </div>
-
-                ${data.attestation && hasAttestation ? `
-                <!-- Attestation -->
-                <details class="mb-2">
-                    <summary class="text-sm font-bold text-purple-400 cursor-pointer mb-2">
-                        TEE Attestation Data (Click to expand)
-                    </summary>
-                    <div class="bg-gray-950 p-3 rounded text-xs overflow-x-auto">
-                        <p class="mb-2"><span class="text-gray-400">Model:</span> ${data.attestation.inference?.model || 'N/A'}</p>
-                        <p class="mb-2"><span class="text-gray-400">Timestamp:</span> ${new Date((data.attestation.inference?.timestamp || 0) * 1000).toLocaleString()}</p>
-                        <p class="mb-2"><span class="text-gray-400">Response Hash:</span> <span class="font-mono text-xs">${data.attestation.inference?.response_hash?.substring(0, 16)}...</span></p>
-                        <button onclick="downloadAttestation()" class="mt-2 bg-purple-600 hover:bg-purple-700 px-3 py-1 rounded text-sm">
-                            Download Attestation
-                        </button>
-                    </div>
-                </details>
-                ` : ''}
-
-                <!-- Full Response -->
-                <details>
-                    <summary class="text-sm text-gray-400 cursor-pointer">Full JSON Response</summary>
-                    <pre class="text-xs mt-2 overflow-x-auto">${JSON.stringify(data, null, 2)}</pre>
-                </details>
-            `;
-
-            // Store attestation globally for download
-            window.lastAttestation = data.attestation;
-            window.lastGeneratedCode = data.generated_code;
-        }
-
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
-        function copyCode() {
-            if (window.lastGeneratedCode) {
-                navigator.clipboard.writeText(window.lastGeneratedCode);
-                UIUtils.showToast('Code copied to clipboard!', 'success');
-            }
-        }
-
-        function downloadAttestation() {
-            if (window.lastAttestation) {
-                const blob = new Blob([JSON.stringify(window.lastAttestation, null, 2)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `attestation-${Date.now()}.json`;
-                a.click();
-                URL.revokeObjectURL(url);
-                UIUtils.showToast('Attestation downloaded!', 'success');
-            }
-        }
-
-        // MCP Sandbox Control Functions
-        async function executeMCPControl() {
-            const description = document.getElementById('mcpDescription').value.trim();
-            const includeAttestation = document.getElementById('mcpAttestation').checked;
-            const showCall = document.getElementById('mcpShowCall').checked;
-            const confirmDangerous = document.getElementById('mcpConfirmDangerous').checked;
-
-            if (!description) {
-                UIUtils.showToast('Please describe what you want to do', 'warning');
-                return;
-            }
-
-            const taskId = 'mcp-control-' + Date.now();
-
-            UIUtils.showToast('Generating MCP call with AI...', 'info');
-
-            const result = await apiClient.processTask(taskId, description, {
-                type: 'ai_mcp_control',
-                description: description,
-                include_attestation: includeAttestation,
-                show_mcp_call: showCall,
-                confirm_dangerous: confirmDangerous
-            });
-
-            if (result.success && result.data.success) {
-                displayMCPResponse(result.data);
-                UIUtils.showToast('MCP operation completed!', 'success');
-            } else {
-                const error = result.data?.error || result.error || 'Unknown error';
-                displayResponse(result.data || { error }, false);
-                UIUtils.showToast('Failed: ' + error, 'error');
-            }
-        }
-
-        function displayMCPResponse(data) {
-            const responseDiv = document.getElementById('response');
-            const timestamp = new Date().toLocaleTimeString();
-
-            const hasAttestation = data.attestation && !data.attestation.error;
-
-            responseDiv.innerHTML = `
-                <div class="mb-4">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-green-400 font-bold">✓ ${data.message || 'MCP operation completed'}</span>
-                        <span class="text-gray-500 text-sm">${timestamp}</span>
-                    </div>
-                    ${hasAttestation ? '<span class="text-blue-400 text-xs">🔒 TEE Attested</span>' : ''}
-                </div>
-
-                ${data.mcp_call ? `
-                <!-- Generated MCP Call -->
-                <div class="mb-4">
-                    <div class="flex items-center justify-between mb-2">
-                        <h4 class="text-sm font-bold text-blue-400">Generated MCP Call</h4>
-                        <button onclick="copyMCPCall()" class="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded">
-                            Copy
-                        </button>
-                    </div>
-                    <pre id="mcpCall" class="bg-gray-950 p-3 rounded text-sm overflow-x-auto border border-gray-700"><code>${escapeHtml(JSON.stringify(data.mcp_call, null, 2))}</code></pre>
-                </div>
-                ` : ''}
-
-                <!-- MCP Result -->
-                <div class="mb-4">
-                    <h4 class="text-sm font-bold text-green-400 mb-2">MCP Result</h4>
-                    <pre class="bg-gray-950 p-3 rounded text-sm overflow-x-auto border border-gray-700">${escapeHtml(typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2))}</pre>
-                </div>
-
-                ${data.attestation && hasAttestation ? `
-                <!-- Attestation -->
-                <details class="mb-2">
-                    <summary class="text-sm font-bold text-blue-400 cursor-pointer mb-2">
-                        TEE Attestation Data (Click to expand)
-                    </summary>
-                    <div class="bg-gray-950 p-3 rounded text-xs overflow-x-auto">
-                        <pre>${JSON.stringify(data.attestation, null, 2)}</pre>
-                        <button onclick="downloadMCPAttestation()" class="mt-2 bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-sm">
-                            Download Attestation
-                        </button>
-                    </div>
-                </details>
-                ` : ''}
-
-                <!-- Full Response -->
-                <details>
-                    <summary class="text-sm text-gray-400 cursor-pointer">Full JSON Response</summary>
-                    <pre class="text-xs mt-2 overflow-x-auto">${JSON.stringify(data, null, 2)}</pre>
-                </details>
-            `;
-
-            // Store data globally for copy/download
-            window.lastMCPCall = data.mcp_call;
-            window.lastMCPAttestation = data.attestation;
-        }
-
-        function copyMCPCall() {
-            if (window.lastMCPCall) {
-                navigator.clipboard.writeText(JSON.stringify(window.lastMCPCall, null, 2));
-                UIUtils.showToast('MCP call copied to clipboard!', 'success');
-            }
-        }
-
-        function downloadMCPAttestation() {
-            if (window.lastMCPAttestation) {
-                const blob = new Blob([JSON.stringify(window.lastMCPAttestation, null, 2)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `mcp-attestation-${Date.now()}.json`;
-                a.click();
-                URL.revokeObjectURL(url);
-                UIUtils.showToast('MCP attestation downloaded!', 'success');
-            }
-        }
-
-        // Helper function for showing MCP help
-        function showMCPHelp() {
-            UIUtils.showToast('Press Cmd/Ctrl+K to open tool browser', 'info');
-        }
-
-        // Static MCP Tool Catalog
-        const MCP_TOOL_CATALOG = {
-            version: "1.0.0",
-            last_updated: "2025-01-22",
-            categories: {
-                shell: {
-                    name: "Shell & Commands",
-                    icon: "💻",
-                    description: "Execute shell commands and scripts",
-                    tools: []
-                },
-                files: {
-                    name: "File Operations",
-                    icon: "📁",
-                    description: "Read, write, and search files",
-                    tools: []
-                },
-                execution: {
-                    name: "Code Execution",
-                    icon: "⚡",
-                    description: "Execute Python and JavaScript code",
-                    tools: []
+        /**
+         * Start a new chat session
+         */
+        async function startNewSession() {
+            if (chatUI) {
+                await chatUI.newSession();
+                if (typeof UIUtils !== 'undefined') {
+                    UIUtils.showToast('New session started', 'success');
                 }
-            },
-            tools: [
-                {
-                    id: "mcp__sandbox__exec_command",
-                    name: "Execute Shell Command",
-                    description: "Execute shell commands in the sandbox environment",
-                    category: "shell",
-                    danger_level: "high",
-                    parameters: [
-                        {
-                            name: "command",
-                            type: "string",
-                            required: true,
-                            description: "Shell command to execute",
-                            example: "ls -la /home"
-                        },
-                        {
-                            name: "timeout",
-                            type: "number",
-                            required: false,
-                            description: "Execution timeout in milliseconds",
-                            default: 30000,
-                            example: 60000
-                        }
-                    ],
-                    examples: [
-                        {
-                            description: "List all Python files",
-                            natural_language: "List all Python files in /home",
-                            mcp_call: {
-                                tool: "mcp__sandbox__exec_command",
-                                parameters: { command: "find /home -name '*.py'" }
-                            }
-                        },
-                        {
-                            description: "Check disk usage",
-                            natural_language: "Show disk usage",
-                            mcp_call: {
-                                tool: "mcp__sandbox__exec_command",
-                                parameters: { command: "df -h" }
-                            }
-                        }
-                    ],
-                    tags: ["shell", "command", "execute", "bash"]
-                },
-                {
-                    id: "mcp__sandbox__read_file",
-                    name: "Read File",
-                    description: "Read contents of a file in the sandbox",
-                    category: "files",
-                    danger_level: "low",
-                    parameters: [
-                        {
-                            name: "file",
-                            type: "string",
-                            required: true,
-                            description: "Absolute path to file",
-                            example: "/home/user/config.json"
-                        },
-                        {
-                            name: "start_line",
-                            type: "number",
-                            required: false,
-                            description: "Starting line number (0-based)",
-                            example: 10
-                        },
-                        {
-                            name: "end_line",
-                            type: "number",
-                            required: false,
-                            description: "Ending line number (exclusive)",
-                            example: 20
-                        }
-                    ],
-                    examples: [
-                        {
-                            description: "Read entire file",
-                            natural_language: "Read /home/config.json",
-                            mcp_call: {
-                                tool: "mcp__sandbox__read_file",
-                                parameters: { file: "/home/config.json" }
-                            }
-                        },
-                        {
-                            description: "Read specific lines",
-                            natural_language: "Read lines 10-20 from /home/app.py",
-                            mcp_call: {
-                                tool: "mcp__sandbox__read_file",
-                                parameters: { file: "/home/app.py", start_line: 10, end_line: 20 }
-                            }
-                        }
-                    ],
-                    tags: ["file", "read", "view", "cat"]
-                },
-                {
-                    id: "mcp__sandbox__write_file",
-                    name: "Write File",
-                    description: "Write content to a file in the sandbox",
-                    category: "files",
-                    danger_level: "medium",
-                    parameters: [
-                        {
-                            name: "file",
-                            type: "string",
-                            required: true,
-                            description: "Absolute path to file",
-                            example: "/home/output.txt"
-                        },
-                        {
-                            name: "content",
-                            type: "string",
-                            required: true,
-                            description: "Content to write to the file",
-                            example: "Hello, World!"
-                        },
-                        {
-                            name: "append",
-                            type: "boolean",
-                            required: false,
-                            description: "Append to file instead of overwriting",
-                            default: false
-                        }
-                    ],
-                    examples: [
-                        {
-                            description: "Create new file",
-                            natural_language: "Write 'Hello, World!' to /home/greeting.txt",
-                            mcp_call: {
-                                tool: "mcp__sandbox__write_file",
-                                parameters: { file: "/home/greeting.txt", content: "Hello, World!" }
-                            }
-                        }
-                    ],
-                    tags: ["file", "write", "create", "save"]
-                },
-                {
-                    id: "mcp__sandbox__list_path",
-                    name: "List Directory",
-                    description: "List contents of a directory",
-                    category: "files",
-                    danger_level: "low",
-                    parameters: [
-                        {
-                            name: "path",
-                            type: "string",
-                            required: true,
-                            description: "Directory path to list",
-                            example: "/home"
-                        },
-                        {
-                            name: "recursive",
-                            type: "boolean",
-                            required: false,
-                            description: "List recursively",
-                            default: false
-                        },
-                        {
-                            name: "show_hidden",
-                            type: "boolean",
-                            required: false,
-                            description: "Show hidden files",
-                            default: true
-                        }
-                    ],
-                    examples: [
-                        {
-                            description: "List directory",
-                            natural_language: "List all files in /home",
-                            mcp_call: {
-                                tool: "mcp__sandbox__list_path",
-                                parameters: { path: "/home" }
-                            }
-                        }
-                    ],
-                    tags: ["directory", "list", "ls", "files"]
-                },
-                {
-                    id: "mcp__sandbox__find_files",
-                    name: "Find Files",
-                    description: "Find files matching a pattern",
-                    category: "files",
-                    danger_level: "low",
-                    parameters: [
-                        {
-                            name: "path",
-                            type: "string",
-                            required: true,
-                            description: "Directory path to search",
-                            example: "/home"
-                        },
-                        {
-                            name: "glob",
-                            type: "string",
-                            required: true,
-                            description: "File pattern (glob)",
-                            example: "*.py"
-                        }
-                    ],
-                    examples: [
-                        {
-                            description: "Find Python files",
-                            natural_language: "Find all Python files in /home",
-                            mcp_call: {
-                                tool: "mcp__sandbox__find_files",
-                                parameters: { path: "/home", glob: "*.py" }
-                            }
-                        }
-                    ],
-                    tags: ["find", "search", "glob", "files"]
-                },
-                {
-                    id: "mcp__sandbox__search_in_file",
-                    name: "Search in File",
-                    description: "Search for text pattern in a file",
-                    category: "files",
-                    danger_level: "low",
-                    parameters: [
-                        {
-                            name: "file",
-                            type: "string",
-                            required: true,
-                            description: "File path to search",
-                            example: "/home/app.py"
-                        },
-                        {
-                            name: "regex",
-                            type: "string",
-                            required: true,
-                            description: "Regular expression pattern",
-                            example: "def.*\\(.*\\)"
-                        }
-                    ],
-                    examples: [
-                        {
-                            description: "Find function definitions",
-                            natural_language: "Find all function definitions in /home/app.py",
-                            mcp_call: {
-                                tool: "mcp__sandbox__search_in_file",
-                                parameters: { file: "/home/app.py", regex: "def .*\\(.*\\):" }
-                            }
-                        }
-                    ],
-                    tags: ["search", "grep", "regex", "find"]
-                },
-                {
-                    id: "mcp__sandbox__execute_jupyter_code",
-                    name: "Execute Python Code",
-                    description: "Execute Python code via Jupyter kernel",
-                    category: "execution",
-                    danger_level: "medium",
-                    parameters: [
-                        {
-                            name: "code",
-                            type: "string",
-                            required: true,
-                            description: "Python code to execute",
-                            example: "print('Hello, World!')"
-                        },
-                        {
-                            name: "timeout",
-                            type: "number",
-                            required: false,
-                            description: "Execution timeout in seconds",
-                            default: 30,
-                            example: 60
-                        }
-                    ],
-                    examples: [
-                        {
-                            description: "Print hello world",
-                            natural_language: "Execute Python code that prints 'Hello, World!'",
-                            mcp_call: {
-                                tool: "mcp__sandbox__execute_jupyter_code",
-                                parameters: { code: "print('Hello, World!')" }
-                            }
-                        },
-                        {
-                            description: "Calculate factorial",
-                            natural_language: "Calculate factorial of 10",
-                            mcp_call: {
-                                tool: "mcp__sandbox__execute_jupyter_code",
-                                parameters: { code: "import math\\nprint(math.factorial(10))" }
-                            }
-                        }
-                    ],
-                    tags: ["python", "execute", "jupyter", "code"]
-                },
-                {
-                    id: "mcp__sandbox__execute_nodejs_code",
-                    name: "Execute JavaScript Code",
-                    description: "Execute JavaScript code via Node.js",
-                    category: "execution",
-                    danger_level: "medium",
-                    parameters: [
-                        {
-                            name: "code",
-                            type: "string",
-                            required: true,
-                            description: "JavaScript code to execute",
-                            example: "console.log('Hello, World!');"
-                        },
-                        {
-                            name: "timeout",
-                            type: "number",
-                            required: false,
-                            description: "Execution timeout in seconds",
-                            default: 30,
-                            example: 60
-                        }
-                    ],
-                    examples: [
-                        {
-                            description: "Print hello world",
-                            natural_language: "Execute JavaScript that prints 'Hello, World!'",
-                            mcp_call: {
-                                tool: "mcp__sandbox__execute_nodejs_code",
-                                parameters: { code: "console.log('Hello, World!');" }
-                            }
-                        }
-                    ],
-                    tags: ["javascript", "nodejs", "execute", "code"]
-                }
-            ]
-        };
-
-        // Organize tools by category
-        MCP_TOOL_CATALOG.tools.forEach(tool => {
-            if (MCP_TOOL_CATALOG.categories[tool.category]) {
-                MCP_TOOL_CATALOG.categories[tool.category].tools.push(tool);
             }
+        }
+
+        /**
+         * Initialize the page
+         */
+        document.addEventListener('DOMContentLoaded', function() {
+            // Load agent status
+            loadAgentStatus();
+
+            // Initialize chat UI
+            chatUI = new ChatUI('chatContainer');
         });
-
-        // MCP Tool Browser Class
-        class MCPToolBrowser {
-            constructor() {
-                this.catalog = MCP_TOOL_CATALOG;
-                this.currentCategory = 'all';
-                this.searchTerm = '';
-            }
-
-            open() {
-                document.getElementById('toolBrowserModal').classList.remove('hidden');
-                document.getElementById('toolDetailPanel').classList.add('hidden');
-                this.render();
-            }
-
-            close() {
-                document.getElementById('toolBrowserModal').classList.add('hidden');
-            }
-
-            filterByCategory(category) {
-                this.currentCategory = category;
-
-                // Update filter chips
-                document.querySelectorAll('.filter-chip').forEach(chip => {
-                    if (chip.dataset.category === category) {
-                        chip.className = 'filter-chip px-3 py-1 rounded bg-blue-600 text-white text-sm';
-                    } else {
-                        chip.className = 'filter-chip px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 text-white text-sm';
-                    }
-                });
-
-                this.render();
-            }
-
-            applyFilters() {
-                this.searchTerm = document.getElementById('toolSearch').value.toLowerCase();
-                this.render();
-            }
-
-            render() {
-                const grid = document.getElementById('toolGrid');
-                let tools = this.catalog.tools;
-
-                // Filter by category
-                if (this.currentCategory !== 'all') {
-                    tools = tools.filter(t => t.category === this.currentCategory);
-                }
-
-                // Filter by search
-                if (this.searchTerm) {
-                    tools = tools.filter(t =>
-                        t.name.toLowerCase().includes(this.searchTerm) ||
-                        t.description.toLowerCase().includes(this.searchTerm) ||
-                        t.tags.some(tag => tag.toLowerCase().includes(this.searchTerm))
-                    );
-                }
-
-                if (tools.length === 0) {
-                    grid.innerHTML = '<p class="text-gray-400 text-center py-8">No tools found matching your criteria.</p>';
-                    return;
-                }
-
-                grid.innerHTML = `
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        ${tools.map(tool => this.renderToolCard(tool)).join('')}
-                    </div>
-                `;
-            }
-
-            renderToolCard(tool) {
-                const dangerColors = {
-                    low: 'border-l-4 border-l-green-500',
-                    medium: 'border-l-4 border-l-yellow-500',
-                    high: 'border-l-4 border-l-red-500'
-                };
-
-                const dangerBadges = {
-                    low: 'bg-green-600',
-                    medium: 'bg-yellow-600',
-                    high: 'bg-red-600'
-                };
-
-                return `
-                    <div class="bg-gray-700 rounded-lg p-4 ${dangerColors[tool.danger_level]} hover:bg-gray-600 cursor-pointer transition-all"
-                         onclick="toolBrowser.showToolDetail('${tool.id}')">
-                        <div class="flex items-start justify-between mb-2">
-                            <h3 class="text-lg font-bold">${tool.name}</h3>
-                            <span class="text-xs px-2 py-1 rounded ${dangerBadges[tool.danger_level]} text-white">
-                                ${tool.danger_level.toUpperCase()}
-                            </span>
-                        </div>
-                        <p class="text-sm text-gray-300 mb-3">${tool.description}</p>
-                        <div class="flex items-center gap-3 text-xs text-gray-400">
-                            <span>📋 ${tool.parameters.length} params</span>
-                            <span>📚 ${tool.examples.length} examples</span>
-                        </div>
-                    </div>
-                `;
-            }
-
-            showToolDetail(toolId) {
-                const tool = this.catalog.tools.find(t => t.id === toolId);
-                if (!tool) return;
-
-                const panel = document.getElementById('toolDetailPanel');
-                panel.innerHTML = `
-                    <div class="space-y-6">
-                        <div>
-                            <h2 class="text-2xl font-bold mb-2">${tool.name}</h2>
-                            <p class="text-gray-300 mb-4">${tool.description}</p>
-                        </div>
-
-                        <div>
-                            <h3 class="text-lg font-bold mb-3">Parameters</h3>
-                            <div class="space-y-3">
-                                ${tool.parameters.map(p => `
-                                    <div class="bg-gray-700 p-3 rounded">
-                                        <div class="flex items-center gap-2 mb-1">
-                                            <code class="text-blue-400">${p.name}</code>
-                                            ${p.required ? '<span class="text-red-400 text-xs">*required</span>' : '<span class="text-gray-500 text-xs">optional</span>'}
-                                            <span class="text-gray-500 text-xs">${p.type}</span>
-                                        </div>
-                                        <p class="text-sm text-gray-400">${p.description}</p>
-                                        ${p.example ? `<code class="text-xs text-green-400">Example: ${escapeHtml(String(p.example))}</code>` : ''}
-                                        ${p.default !== undefined ? `<span class="text-xs text-gray-500"> (default: ${p.default})</span>` : ''}
-                                    </div>
-                                `).join('')}
-                            </div>
-                        </div>
-
-                        <div>
-                            <h3 class="text-lg font-bold mb-3">Examples</h3>
-                            <div class="space-y-3">
-                                ${tool.examples.map((ex, i) => `
-                                    <div class="bg-gray-700 p-3 rounded">
-                                        <p class="text-sm font-medium mb-2">${ex.description}</p>
-                                        <p class="text-xs text-blue-400 mb-2">"${ex.natural_language}"</p>
-                                        <button onclick="toolBrowser.useExample('${tool.id}', ${i})"
-                                                class="text-xs bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded">
-                                            Try This Example
-                                        </button>
-                                    </div>
-                                `).join('')}
-                            </div>
-                        </div>
-
-                        <div class="flex gap-3 pt-4 border-t border-gray-600">
-                            <button onclick="toolBrowser.useTool('${tool.id}')"
-                                    class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded font-bold flex-1">
-                                Use This Tool
-                            </button>
-                            <button onclick="toolBrowser.closeDetail()"
-                                    class="bg-gray-700 hover:bg-gray-600 px-6 py-2 rounded">
-                                Back
-                            </button>
-                        </div>
-                    </div>
-                `;
-                panel.classList.remove('hidden');
-            }
-
-            closeDetail() {
-                document.getElementById('toolDetailPanel').classList.add('hidden');
-            }
-
-            useTool(toolId) {
-                const tool = this.catalog.tools.find(t => t.id === toolId);
-                if (!tool) return;
-
-                const template = `Use ${tool.name} to [describe your specific task]`;
-                document.getElementById('mcpDescription').value = template;
-                this.close();
-                document.getElementById('mcpDescription').focus();
-                UIUtils.showToast('Tool template added! Describe your specific task.', 'info');
-            }
-
-            useExample(toolId, exampleIndex) {
-                const tool = this.catalog.tools.find(t => t.id === toolId);
-                if (!tool) return;
-
-                const example = tool.examples[exampleIndex];
-                document.getElementById('mcpDescription').value = example.natural_language;
-                this.close();
-                UIUtils.showToast('Example loaded! Click "Generate & Execute" to run.', 'success');
-            }
-        }
-
-        // Initialize tool browser
-        const toolBrowser = new MCPToolBrowser();
-
-        // Keyboard shortcuts
-        document.addEventListener('keydown', (e) => {
-            // Cmd/Ctrl + K to open tool browser
-            if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-                e.preventDefault();
-                toolBrowser.open();
-            }
-
-            // Escape to close tool browser
-            if (e.key === 'Escape' && !document.getElementById('toolBrowserModal').classList.contains('hidden')) {
-                e.preventDefault();
-                toolBrowser.close();
-            }
-        });
-
-        // Load agent status on page load
-        loadAgentStatus();
     </script>
 </body>
 </html>
