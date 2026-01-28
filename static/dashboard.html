@@ -189,20 +189,46 @@
             const content = document.getElementById('step3-content');
             const status = document.getElementById('step3-status');
 
+            // Always enable step 3 visually
+            step3.className = 'bg-gray-800 rounded-lg p-6';
+
             const result = await apiClient.getReputation();
 
             if (!result.success) {
-                UIUtils.showError('step3-content', result.error, checkReputation);
+                // Reputation check failed - show error with retry
+                status.className = 'w-8 h-8 rounded-full bg-yellow-600 flex items-center justify-center';
+                status.innerHTML = '!';
+                content.innerHTML = `
+                    <p class="text-yellow-400 mb-2">⚠ Reputation Check Failed</p>
+                    <p class="text-sm text-gray-400 mb-2">${result.error}</p>
+                    <button onclick="checkReputation()" class="bg-gray-600 hover:bg-gray-700 px-3 py-1 rounded text-sm">
+                        Retry
+                    </button>
+                `;
                 return;
             }
 
             const data = result.data;
+            const isReputationRegistered = data.reputation_registered;
             const rep = data.reputation || {};
             const feedbackCount = rep.feedbackCount || 0;
             const avgScore = rep.averageScore || 0;
 
-            // Mark step as complete
-            step3.className = 'bg-gray-800 rounded-lg p-6';
+            if (!isReputationRegistered) {
+                // NOT registered for reputation - show register button
+                status.className = 'w-8 h-8 rounded-full bg-yellow-600 flex items-center justify-center';
+                status.innerHTML = '!';
+                content.innerHTML = `
+                    <p class="text-yellow-400 mb-2">⚠ Not Registered for Reputation</p>
+                    <p class="text-sm text-gray-400 mb-3">You must register for reputation before TEE verification.</p>
+                    <button onclick="registerReputation()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">
+                        Register for Reputation
+                    </button>
+                `;
+                return;
+            }
+
+            // Registered for reputation - mark step as complete
             status.className = 'w-8 h-8 rounded-full bg-green-600 flex items-center justify-center';
             status.innerHTML = '✓';
 
@@ -216,7 +242,7 @@
             } else {
                 // No feedback yet
                 content.innerHTML = `
-                    <p class="text-green-400 mb-2">✓ No feedback yet</p>
+                    <p class="text-green-400 mb-2">✓ Registered for Reputation</p>
                     <p class="text-sm text-gray-400">Your reputation will build as users interact with your agent.</p>
                 `;
             }
@@ -224,6 +250,41 @@
             // Enable step 4 and continue to TEE verification
             document.getElementById('step4').classList.remove('opacity-50');
             checkTEE();
+        }
+
+        async function registerReputation() {
+            const content = document.getElementById('step3-content');
+            UIUtils.showLoading('step3-content', 'Registering for reputation...');
+
+            const result = await apiClient.registerReputation();
+
+            if (result.success) {
+                const data = result.data;
+
+                if (data.already_registered) {
+                    UIUtils.showToast('Already registered for reputation!', 'info');
+                    checkReputation();
+                    return;
+                }
+
+                // Transaction submitted
+                const txHash = data.tx_hash;
+                content.innerHTML = `
+                    <p class="text-yellow-400 mb-2">⏳ Transaction Pending</p>
+                    <p class="text-sm text-gray-400 mb-1">TX: ${UIUtils.formatTxHash(txHash)}</p>
+                    <p class="text-sm text-gray-500">Waiting for confirmation...</p>
+                `;
+
+                UIUtils.showToast('Reputation registration submitted!', 'info');
+
+                // Poll for confirmation
+                setTimeout(async () => {
+                    await checkReputation();
+                }, 5000);
+            } else {
+                UIUtils.showError('step3-content', result.error, registerReputation);
+                UIUtils.showToast('Registration failed: ' + result.error, 'error');
+            }
         }
 
         // Track TEE polling interval

@@ -161,6 +161,28 @@ class RegistryClient:
         ]
 
         self.reputation_abi = [
+            # Register agent for reputation (required before TEE registration)
+            {
+                "inputs": [
+                    {"name": "agentId", "type": "uint256"}
+                ],
+                "name": "registerAgent",
+                "outputs": [],
+                "type": "function",
+                "stateMutability": "nonpayable"
+            },
+            # Check if agent is registered for reputation
+            {
+                "inputs": [
+                    {"name": "agentId", "type": "uint256"}
+                ],
+                "name": "isAgentRegistered",
+                "outputs": [
+                    {"name": "", "type": "bool"}
+                ],
+                "type": "function",
+                "stateMutability": "view"
+            },
             {
                 "inputs": [
                     {"name": "agentId", "type": "uint256"},
@@ -499,6 +521,67 @@ class RegistryClient:
 
         print(f"📤 Feedback tx: {tx_hash.hex()}")
         return tx_hash.hex()
+
+    async def check_reputation_registered(self, agent_id: int) -> bool:
+        """
+        Check if agent is registered for reputation.
+
+        Args:
+            agent_id: Agent ID to check
+
+        Returns:
+            True if registered, False otherwise
+        """
+        try:
+            return self.reputation_contract.functions.isAgentRegistered(agent_id).call()
+        except Exception as e:
+            print(f"⚠️  Error checking reputation registration: {e}")
+            return False
+
+    async def register_reputation(self, agent_id: int, wait_for_receipt: bool = True) -> Dict[str, Any]:
+        """
+        Register agent for reputation system.
+
+        Must be called BEFORE TEE registration.
+
+        Args:
+            agent_id: Agent ID to register
+            wait_for_receipt: If True, wait for confirmation
+
+        Returns:
+            Dict with tx_hash and optionally confirmation status
+        """
+        if not self.account:
+            raise ValueError("Account required for reputation registration")
+
+        # Check if already registered
+        is_registered = await self.check_reputation_registered(agent_id)
+        if is_registered:
+            print(f"✅ Agent {agent_id} already registered for reputation")
+            return {"already_registered": True, "agent_id": agent_id}
+
+        tx = self.reputation_contract.functions.registerAgent(agent_id).build_transaction({
+            'chainId': self.chain_id,
+            'gas': 150000,
+            'gasPrice': self.w3.eth.gas_price,
+            'nonce': self.w3.eth.get_transaction_count(self.account.address)
+        })
+
+        signed_tx = self.account.sign_transaction(tx)
+        tx_hash = self.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+
+        print(f"📤 Reputation registration tx: {tx_hash.hex()}")
+
+        if not wait_for_receipt:
+            return {"tx_hash": tx_hash.hex(), "agent_id": agent_id}
+
+        receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
+
+        if receipt.status != 1:
+            raise RuntimeError(f"Reputation registration failed: tx={tx_hash.hex()}")
+
+        print(f"✅ Agent {agent_id} registered for reputation")
+        return {"tx_hash": tx_hash.hex(), "agent_id": agent_id, "confirmed": True}
 
     async def get_reputation(self, agent_id: int) -> Dict[str, Any]:
         """
