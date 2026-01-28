@@ -15,6 +15,9 @@ agent0-sdk>=0.31.0
 # GraphQL client for subgraph queries
 gql[aiohttp]>=3.5.0
 
+# Anthropic SDK for chat interface (Redpill compatible)
+anthropic>=0.40.0
+
 # Optional: AI capabilities (install with pip install -e .[ai])
 # openai>=1.0.0
 # anthropic>=0.3.0
