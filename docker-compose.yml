@@ -95,6 +95,12 @@ services:
       - AI_TEMPERATURE=${AI_TEMPERATURE:-0.3}
       - AI_MAX_TOKENS={AI_MAX_TOKENS:-2000}
 
+      # Anthropic SDK configuration (for chat interface via Redpill)
+      - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-${REDPILL_API_KEY}}
+      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-https://api.redpill.ai}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-openai/gpt-oss-120b}
+      - CODE_EXECUTION_TIMEOUT=${CODE_EXECUTION_TIMEOUT:-30}
+
     volumes:
       - app_data:/app
       - /var/run/dstack.sock:/var/run/dstack.sock
