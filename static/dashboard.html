@@ -52,24 +52,24 @@
                 </div>
             </div>
 
-            <!-- Step 3: TEE Verification -->
-            <div id="step3" class="bg-gray-800 rounded-lg p-6 opacity-50">
+            <!-- Step 4: TEE Verification -->
+            <div id="step4" class="bg-gray-800 rounded-lg p-6 opacity-50">
                 <div class="flex items-center gap-4 mb-4">
-                    <div id="step3-status" class="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center">3</div>
+                    <div id="step4-status" class="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center">4</div>
                     <h2 class="text-2xl font-bold">TEE Verification</h2>
                 </div>
-                <div id="step3-content" class="ml-12">
+                <div id="step4-content" class="ml-12">
                     <p class="text-gray-400">Waiting for registration...</p>
                 </div>
             </div>
 
-            <!-- Step 4: Agent Ready -->
-            <div id="step4" class="bg-gray-800 rounded-lg p-6 opacity-50">
+            <!-- Step 5: Agent Ready -->
+            <div id="step5" class="bg-gray-800 rounded-lg p-6 opacity-50">
                 <div class="flex items-center gap-4 mb-4">
-                    <div id="step4-status" class="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center">4</div>
+                    <div id="step5-status" class="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center">5</div>
                     <h2 class="text-2xl font-bold">Agent Status</h2>
                 </div>
-                <div id="step4-content" class="ml-12">
+                <div id="step5-content" class="ml-12">
                     <p class="text-gray-400">Waiting for TEE verification...</p>
                 </div>
             </div>
@@ -172,7 +172,7 @@
                     ${txLinkHtml}
                 `;
                 state.registration = data.agent;
-                document.getElementById('step3').classList.remove('opacity-50');
+                document.getElementById('step4').classList.remove('opacity-50');
                 checkTEE();
             } else {
                 content.innerHTML = `
@@ -185,14 +185,14 @@
         }
 
         async function checkTEE() {
-            const step3 = document.getElementById('step3');
-            const content = document.getElementById('step3-content');
-            const status = document.getElementById('step3-status');
+            const step4 = document.getElementById('step4');
+            const content = document.getElementById('step4-content');
+            const status = document.getElementById('step4-status');
 
             const result = await apiClient.getStatus();
 
             if (!result.success) {
-                UIUtils.showError('step3-content', result.error, checkTEE);
+                UIUtils.showError('step4-content', result.error, checkTEE);
                 return;
             }
 
@@ -200,7 +200,7 @@
 
             if (data.agent.tee_verified) {
                 // Already verified - show checkmark
-                step3.className = 'bg-gray-800 rounded-lg p-6';
+                step4.className = 'bg-gray-800 rounded-lg p-6';
                 status.className = 'w-8 h-8 rounded-full bg-green-600 flex items-center justify-center';
                 status.innerHTML = '✓';
 
@@ -219,7 +219,7 @@
                     <p class="text-sm text-gray-400">Agent ID: ${data.agent.agent_id}</p>
                     ${txLinkHtml}
                 `;
-                document.getElementById('step4').classList.remove('opacity-50');
+                document.getElementById('step5').classList.remove('opacity-50');
                 markAgentReady();
             } else {
                 content.innerHTML = `
@@ -231,11 +231,11 @@
         }
 
         function markAgentReady() {
-            const step4 = document.getElementById('step4');
-            const content = document.getElementById('step4-content');
-            const status = document.getElementById('step4-status');
+            const step5 = document.getElementById('step5');
+            const content = document.getElementById('step5-content');
+            const status = document.getElementById('step5-status');
 
-            step4.className = 'bg-gray-800 rounded-lg p-6';
+            step5.className = 'bg-gray-800 rounded-lg p-6';
             status.className = 'w-8 h-8 rounded-full bg-green-600 flex items-center justify-center';
             status.innerHTML = '✓';
             content.innerHTML = `
@@ -248,8 +248,8 @@
         }
 
         async function registerTEE() {
-            const content = document.getElementById('step3-content');
-            UIUtils.showLoading('step3-content', 'Verifying TEE...');
+            const content = document.getElementById('step4-content');
+            UIUtils.showLoading('step4-content', 'Verifying TEE...');
 
             const result = await apiClient.registerTEE();
 
@@ -288,7 +288,7 @@
                     checkTEE();
                 }
             } else {
-                UIUtils.showError('step3-content', result.error, registerTEE);
+                UIUtils.showError('step4-content', result.error, registerTEE);
                 UIUtils.showToast('TEE verification failed: ' + result.error, 'error');
             }
         }
