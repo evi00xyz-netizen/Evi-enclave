@@ -203,8 +203,9 @@ class RegistryClient:
             {
                 "inputs": [
                     {"name": "agentId", "type": "uint256"},
-                    {"name": "tag1Filter", "type": "string"},
-                    {"name": "tag2Filter", "type": "string"}
+                    {"name": "clientAddresses", "type": "address[]"},
+                    {"name": "tag1", "type": "string"},
+                    {"name": "tag2", "type": "string"}
                 ],
                 "name": "getSummary",
                 "outputs": [
@@ -520,6 +521,7 @@ class RegistryClient:
         try:
             result = self.reputation_contract.functions.getSummary(
                 agent_id,
+                [],  # No client address filter (empty array)
                 "",  # No tag1 filter
                 ""   # No tag2 filter
             ).call()

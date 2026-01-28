@@ -189,22 +189,21 @@ class SubgraphClient:
         query = gql("""
             query GetReputation($agentId: String!, $feedbackLimit: Int!) {
                 agentStats(id: $agentId) {
-                    feedbackCount
-                    averageScore
+                    totalFeedback
+                    averageFeedbackValue
                 }
                 feedbacks(
                     where: { agent: $agentId }
                     first: $feedbackLimit
-                    orderBy: timestamp
+                    orderBy: createdAt
                     orderDirection: desc
                 ) {
                     id
                     tag1
                     tag2
                     value
-                    valueDecimals
-                    reviewer
-                    timestamp
+                    clientAddress
+                    createdAt
                 }
             }
         """)
@@ -217,12 +216,12 @@ class SubgraphClient:
                     variable_values={"agentId": agent_id, "feedbackLimit": feedback_limit}
                 )
 
-                stats = result.get("agentStats") or {"feedbackCount": 0, "averageScore": 0}
+                stats = result.get("agentStats") or {"totalFeedback": 0, "averageFeedbackValue": 0}
                 feedbacks = result.get("feedbacks", [])
 
                 reputation_data = {
-                    "feedbackCount": int(stats.get("feedbackCount", 0)),
-                    "averageScore": float(stats.get("averageScore", 0)),
+                    "feedbackCount": int(stats.get("totalFeedback", 0)),
+                    "averageScore": float(stats.get("averageFeedbackValue", 0)),
                     "recentFeedback": feedbacks
                 }
 
