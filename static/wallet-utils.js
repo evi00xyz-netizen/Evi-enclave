@@ -319,6 +319,13 @@ class APIClient {
         const endpoint = agentId ? `/api/reputation/${agentId}` : '/api/reputation';
         return this.get(endpoint);
     }
+
+    /**
+     * Submit initial reputation entry
+     */
+    async submitInitialReputation() {
+        return this.post('/api/reputation/submit-initial');
+    }
 }
 
 /**
