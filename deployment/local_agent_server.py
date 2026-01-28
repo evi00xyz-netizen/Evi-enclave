@@ -972,6 +972,30 @@ async def get_reputation(agent_id: Optional[int] = None):
         raise HTTPException(status_code=500, detail=f"Failed to get reputation: {str(e)}")
 
 
+@app.post("/api/reputation/submit-initial")
+async def submit_initial_reputation(request: Dict[str, Any] = None):
+    """Submit initial reputation entry for agent."""
+    if not agent:
+        raise HTTPException(status_code=503, detail="Agent not initialized")
+
+    if not agent.is_registered or not agent.agent_id:
+        raise HTTPException(status_code=400, detail="Agent must be registered first")
+
+    try:
+        result = await agent._registry_client.submit_initial_reputation(
+            agent_id=agent.agent_id,
+            wait_for_receipt=True
+        )
+        return {
+            "success": True,
+            "tx_hash": result.get("tx_hash"),
+            "agent_id": result.get("agent_id"),
+            "confirmed": result.get("confirmed", False)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to submit initial reputation: {str(e)}")
+
+
 tasks = {}
 
 @app.post("/tasks")
