@@ -125,13 +125,8 @@ class RegistryClient:
                 "type": "function",
                 "stateMutability": "view"
             },
-            {
-                "inputs": [{"name": "owner", "type": "address"}, {"name": "index", "type": "uint256"}],
-                "name": "tokenOfOwnerByIndex",
-                "outputs": [{"name": "", "type": "uint256"}],
-                "type": "function",
-                "stateMutability": "view"
-            },
+            # NOTE: tokenOfOwnerByIndex is NOT available on this contract
+            # Use subgraph or brute force search instead
             {
                 "inputs": [
                     {"name": "agentId", "type": "uint256"},
@@ -273,6 +268,8 @@ class RegistryClient:
                 print(f"⚠️  Fast verification failed, falling back to slow path")
 
         # SLOW PATH: RPC-based lookup
+        # Note: Contract does NOT have tokenOfOwnerByIndex (not ERC721Enumerable)
+        # We must use brute force search by checking ownerOf for each token ID
         try:
             if agent_address:
                 checksum_address = Web3.to_checksum_address(agent_address)
@@ -282,36 +279,28 @@ class RegistryClient:
                 print(f"🔍 NFT Balance: {balance}")
 
                 if balance > 0:
-                    try:
-                        token_id = self.identity_contract.functions.tokenOfOwnerByIndex(checksum_address, 0).call()
-                        print(f"✅ Found agent ID {token_id} for address {checksum_address}")
-                        return {
-                            "registered": True,
-                            "agent_id": token_id,
-                            "agent_address": agent_address
-                        }
-                    except Exception as token_err:
-                        print(f"⚠️  Error getting token by index: {token_err}")
-                        # Fallback: brute force search
-                        print(f"🔍 Attempting brute force search for token ID...")
-                        for potential_id in range(1, 1000):
-                            try:
-                                owner = self.identity_contract.functions.ownerOf(potential_id).call()
-                                if owner.lower() == checksum_address.lower():
-                                    print(f"✅ Found agent ID {potential_id} via brute force")
-                                    return {
-                                        "registered": True,
-                                        "agent_id": potential_id,
-                                        "agent_address": agent_address
-                                    }
-                            except:
-                                continue
+                    # Brute force search - contract doesn't support enumeration
+                    print(f"🔍 Searching for token ID (checking up to 1000 tokens)...")
+                    for potential_id in range(1, 1000):
+                        try:
+                            owner = self.identity_contract.functions.ownerOf(potential_id).call()
+                            if owner.lower() == checksum_address.lower():
+                                print(f"✅ Found agent ID {potential_id}")
+                                return {
+                                    "registered": True,
+                                    "agent_id": potential_id,
+                                    "agent_address": agent_address
+                                }
+                        except:
+                            continue
 
-                        return {
-                            "registered": True,
-                            "agent_id": None,
-                            "agent_address": agent_address
-                        }
+                    # Balance > 0 but couldn't find token (maybe ID > 1000)
+                    print(f"⚠️  Has NFT but couldn't find token ID in range 1-1000")
+                    return {
+                        "registered": True,
+                        "agent_id": None,
+                        "agent_address": agent_address
+                    }
                 else:
                     print(f"⚠️  Address has no NFTs (balance: 0)")
         except Exception as e:
@@ -375,18 +364,29 @@ class RegistryClient:
         if receipt.status != 1:
             raise RuntimeError(f"Registration failed: tx={tx_hash.hex()}")
 
-        # Get agent ID from logs
-        if receipt['logs'] and len(receipt['logs'][0]['topics']) >= 4:
-            agent_id = int(receipt['logs'][0]['topics'][3].hex(), 16)
-        else:
-            balance = self.identity_contract.functions.balanceOf(self.account.address).call()
-            if balance > 0:
-                agent_id = self.identity_contract.functions.tokenOfOwnerByIndex(
-                    self.account.address,
-                    balance - 1
-                ).call()
-            else:
-                raise RuntimeError("Registration succeeded but couldn't determine agent ID")
+        # Get agent ID from logs (Transfer event: topics[3] is tokenId)
+        agent_id = None
+        if receipt['logs']:
+            for log in receipt['logs']:
+                if len(log['topics']) >= 4:
+                    # Transfer event has tokenId as 4th topic
+                    agent_id = int(log['topics'][3].hex(), 16)
+                    break
+
+        # Fallback: brute force search (contract doesn't have tokenOfOwnerByIndex)
+        if agent_id is None:
+            checksum_address = Web3.to_checksum_address(self.account.address)
+            for potential_id in range(1, 1000):
+                try:
+                    owner = self.identity_contract.functions.ownerOf(potential_id).call()
+                    if owner.lower() == checksum_address.lower():
+                        agent_id = potential_id
+                        break
+                except:
+                    continue
+
+        if agent_id is None:
+            raise RuntimeError("Registration succeeded but couldn't determine agent ID")
 
         print(f"✅ Registered with Agent ID: {agent_id}")
         return {"agent_id": agent_id, "tx_hash": tx_hash.hex()}
