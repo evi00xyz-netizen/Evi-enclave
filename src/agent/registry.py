@@ -160,38 +160,18 @@ class RegistryClient:
             }
         ]
 
+        # ReputationRegistry ABI from https://github.com/erc-8004/erc-8004-contracts/blob/master/abis/ReputationRegistry.json
         self.reputation_abi = [
-            # Register agent for reputation (required before TEE registration)
-            {
-                "inputs": [
-                    {"name": "agentId", "type": "uint256"}
-                ],
-                "name": "registerAgent",
-                "outputs": [],
-                "type": "function",
-                "stateMutability": "nonpayable"
-            },
-            # Check if agent is registered for reputation
-            {
-                "inputs": [
-                    {"name": "agentId", "type": "uint256"}
-                ],
-                "name": "isAgentRegistered",
-                "outputs": [
-                    {"name": "", "type": "bool"}
-                ],
-                "type": "function",
-                "stateMutability": "view"
-            },
             {
                 "inputs": [
                     {"name": "agentId", "type": "uint256"},
+                    {"name": "value", "type": "int128"},
+                    {"name": "valueDecimals", "type": "uint8"},
                     {"name": "tag1", "type": "string"},
                     {"name": "tag2", "type": "string"},
-                    {"name": "value", "type": "int256"},
-                    {"name": "valueDecimals", "type": "uint8"},
-                    {"name": "uri", "type": "string"},
-                    {"name": "uriHash", "type": "bytes32"}
+                    {"name": "endpoint", "type": "string"},
+                    {"name": "feedbackURI", "type": "string"},
+                    {"name": "feedbackHash", "type": "bytes32"}
                 ],
                 "name": "giveFeedback",
                 "outputs": [],
@@ -202,17 +182,15 @@ class RegistryClient:
                 "inputs": [
                     {"name": "agentId", "type": "uint256"},
                     {"name": "clientAddress", "type": "address"},
-                    {"name": "index", "type": "uint64"}
+                    {"name": "feedbackIndex", "type": "uint64"}
                 ],
                 "name": "readFeedback",
                 "outputs": [
+                    {"name": "value", "type": "int128"},
+                    {"name": "valueDecimals", "type": "uint8"},
                     {"name": "tag1", "type": "string"},
                     {"name": "tag2", "type": "string"},
-                    {"name": "value", "type": "int256"},
-                    {"name": "valueDecimals", "type": "uint8"},
-                    {"name": "uri", "type": "string"},
-                    {"name": "uriHash", "type": "bytes32"},
-                    {"name": "timestamp", "type": "uint256"}
+                    {"name": "isRevoked", "type": "bool"}
                 ],
                 "type": "function",
                 "stateMutability": "view"
@@ -226,8 +204,32 @@ class RegistryClient:
                 ],
                 "name": "getSummary",
                 "outputs": [
-                    {"name": "count", "type": "uint256"},
-                    {"name": "averageScore", "type": "int256"}
+                    {"name": "count", "type": "uint64"},
+                    {"name": "summaryValue", "type": "int128"},
+                    {"name": "summaryValueDecimals", "type": "uint8"}
+                ],
+                "type": "function",
+                "stateMutability": "view"
+            },
+            {
+                "inputs": [
+                    {"name": "agentId", "type": "uint256"}
+                ],
+                "name": "getClients",
+                "outputs": [
+                    {"name": "", "type": "address[]"}
+                ],
+                "type": "function",
+                "stateMutability": "view"
+            },
+            {
+                "inputs": [
+                    {"name": "agentId", "type": "uint256"},
+                    {"name": "clientAddress", "type": "address"}
+                ],
+                "name": "getLastIndex",
+                "outputs": [
+                    {"name": "", "type": "uint64"}
                 ],
                 "type": "function",
                 "stateMutability": "view"
@@ -476,24 +478,26 @@ class RegistryClient:
     async def give_feedback(
         self,
         agent_id: int,
-        tag1: str,
-        tag2: str,
         value: int,
         value_decimals: int = 2,
-        uri: str = "",
-        uri_hash: bytes = b'\x00' * 32
+        tag1: str = "",
+        tag2: str = "",
+        endpoint: str = "",
+        feedback_uri: str = "",
+        feedback_hash: bytes = b'\x00' * 32
     ) -> str:
         """
         Submit feedback to the Reputation Registry (ERC-8004 format).
 
         Args:
             agent_id: ID of agent being rated
+            value: Feedback value as int128 (e.g., 9850 for 98.50%)
+            value_decimals: Decimal places for value interpretation
             tag1: Primary measurement dimension (e.g., "reliability")
             tag2: Secondary dimension (e.g., "uptime")
-            value: Feedback value as integer (e.g., 9850 for 98.50%)
-            value_decimals: Decimal places for value interpretation
-            uri: Optional IPFS URI for rich feedback context
-            uri_hash: Integrity hash for URI content
+            endpoint: Endpoint that was called
+            feedback_uri: Optional IPFS URI for rich feedback context
+            feedback_hash: Integrity hash for URI content
 
         Returns:
             Transaction hash
@@ -503,12 +507,13 @@ class RegistryClient:
 
         tx = self.reputation_contract.functions.giveFeedback(
             agent_id,
-            tag1,
-            tag2,
             value,
             value_decimals,
-            uri,
-            uri_hash
+            tag1,
+            tag2,
+            endpoint,
+            feedback_uri,
+            feedback_hash
         ).build_transaction({
             'chainId': self.chain_id,
             'gas': 200000,
@@ -522,67 +527,6 @@ class RegistryClient:
         print(f"📤 Feedback tx: {tx_hash.hex()}")
         return tx_hash.hex()
 
-    async def check_reputation_registered(self, agent_id: int) -> bool:
-        """
-        Check if agent is registered for reputation.
-
-        Args:
-            agent_id: Agent ID to check
-
-        Returns:
-            True if registered, False otherwise
-        """
-        try:
-            return self.reputation_contract.functions.isAgentRegistered(agent_id).call()
-        except Exception as e:
-            print(f"⚠️  Error checking reputation registration: {e}")
-            return False
-
-    async def register_reputation(self, agent_id: int, wait_for_receipt: bool = True) -> Dict[str, Any]:
-        """
-        Register agent for reputation system.
-
-        Must be called BEFORE TEE registration.
-
-        Args:
-            agent_id: Agent ID to register
-            wait_for_receipt: If True, wait for confirmation
-
-        Returns:
-            Dict with tx_hash and optionally confirmation status
-        """
-        if not self.account:
-            raise ValueError("Account required for reputation registration")
-
-        # Check if already registered
-        is_registered = await self.check_reputation_registered(agent_id)
-        if is_registered:
-            print(f"✅ Agent {agent_id} already registered for reputation")
-            return {"already_registered": True, "agent_id": agent_id}
-
-        tx = self.reputation_contract.functions.registerAgent(agent_id).build_transaction({
-            'chainId': self.chain_id,
-            'gas': 150000,
-            'gasPrice': self.w3.eth.gas_price,
-            'nonce': self.w3.eth.get_transaction_count(self.account.address)
-        })
-
-        signed_tx = self.account.sign_transaction(tx)
-        tx_hash = self.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-
-        print(f"📤 Reputation registration tx: {tx_hash.hex()}")
-
-        if not wait_for_receipt:
-            return {"tx_hash": tx_hash.hex(), "agent_id": agent_id}
-
-        receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
-
-        if receipt.status != 1:
-            raise RuntimeError(f"Reputation registration failed: tx={tx_hash.hex()}")
-
-        print(f"✅ Agent {agent_id} registered for reputation")
-        return {"tx_hash": tx_hash.hex(), "agent_id": agent_id, "confirmed": True}
-
     async def get_reputation(self, agent_id: int) -> Dict[str, Any]:
         """
         Get agent reputation.
@@ -593,7 +537,7 @@ class RegistryClient:
             agent_id: Agent ID to lookup
 
         Returns:
-            Reputation information
+            Reputation information with feedbackCount and averageScore
         """
         # Try subgraph first (fast)
         if self.subgraph:
@@ -603,6 +547,7 @@ class RegistryClient:
 
         # Fall back to RPC
         try:
+            # getSummary returns (count: uint64, summaryValue: int128, summaryValueDecimals: uint8)
             result = self.reputation_contract.functions.getSummary(
                 agent_id,
                 [],  # No client address filter (empty array)
@@ -610,9 +555,19 @@ class RegistryClient:
                 ""   # No tag2 filter
             ).call()
 
+            count = result[0]
+            summary_value = result[1]
+            decimals = result[2]
+
+            # Convert to human-readable score
+            if count > 0 and decimals > 0:
+                average_score = summary_value / (10 ** decimals)
+            else:
+                average_score = 0
+
             return {
-                "feedbackCount": result[0],
-                "averageScore": result[1] / 100 if result[0] > 0 else 0
+                "feedbackCount": count,
+                "averageScore": average_score
             }
         except Exception as e:
             print(f"⚠️  Error getting reputation: {e}")

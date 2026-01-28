@@ -319,13 +319,6 @@ class APIClient {
         const endpoint = agentId ? `/api/reputation/${agentId}` : '/api/reputation';
         return this.get(endpoint);
     }
-
-    /**
-     * Register agent for reputation
-     */
-    async registerReputation() {
-        return this.post('/api/reputation/register');
-    }
 }
 
 /**

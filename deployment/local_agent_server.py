@@ -951,7 +951,7 @@ async def agent_registration_wellknown():
 @app.get("/api/reputation")
 @app.get("/api/reputation/{agent_id}")
 async def get_reputation(agent_id: Optional[int] = None):
-    """Get agent reputation from subgraph."""
+    """Get agent reputation from contract/subgraph."""
     if not agent:
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
@@ -962,56 +962,14 @@ async def get_reputation(agent_id: Optional[int] = None):
         raise HTTPException(status_code=400, detail="Agent not registered - no agent_id available")
 
     try:
-        # Also check if registered for reputation
-        is_reputation_registered = await agent._registry_client.check_reputation_registered(target_agent_id)
-
         reputation = await agent._registry_client.get_reputation(target_agent_id)
         return {
             "agent_id": target_agent_id,
             "reputation": reputation,
-            "reputation_registered": is_reputation_registered,
             "timestamp": datetime.utcnow().isoformat()
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get reputation: {str(e)}")
-
-
-@app.post("/api/reputation/register")
-async def register_reputation():
-    """Register agent for reputation system. Required before TEE registration."""
-    if not agent or not tee_auth:
-        raise HTTPException(status_code=503, detail="Agent not initialized")
-
-    if not agent.is_registered or not agent.agent_id:
-        raise HTTPException(status_code=400, detail="Agent must be identity-registered first")
-
-    try:
-        # Check if already registered
-        is_registered = await agent._registry_client.check_reputation_registered(agent.agent_id)
-        if is_registered:
-            return {
-                "success": True,
-                "already_registered": True,
-                "agent_id": agent.agent_id,
-                "message": "Agent already registered for reputation"
-            }
-
-        # Register for reputation
-        result = await agent._registry_client.register_reputation(
-            agent.agent_id,
-            wait_for_receipt=False  # Return tx_hash immediately
-        )
-
-        return {
-            "success": True,
-            "tx_hash": result.get("tx_hash"),
-            "agent_id": agent.agent_id,
-            "message": "Reputation registration transaction submitted"
-        }
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to register for reputation: {str(e)}")
 
 
 tasks = {}

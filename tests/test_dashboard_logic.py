@@ -159,7 +159,7 @@ class TestDashboardFlow:
             html = f.read()
 
         # Should have the fix that enables step4 even on reputation failure
-        assert "// IMPORTANT: Still enable step 4 - don't block the flow" in html
+        assert "// Still enable step 4 - reputation is informational only" in html
         assert "document.getElementById('step4').classList.remove('opacity-50')" in html
 
 
