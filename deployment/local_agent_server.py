@@ -668,6 +668,36 @@ async def prepare_tee():
     }
 
 
+@app.get("/api/tee/status")
+async def get_tee_status():
+    """Get TEE preparation status."""
+    global tee_preparation
+
+    if not agent:
+        raise HTTPException(status_code=503, detail="Agent not initialized")
+
+    response = {
+        "state": tee_preparation["state"],
+        "error": tee_preparation["error"]
+    }
+
+    if tee_preparation["state"] == "preparing" and tee_preparation["started_at"]:
+        response["elapsed_seconds"] = int(datetime.utcnow().timestamp() - tee_preparation["started_at"])
+
+    if tee_preparation["state"] == "ready" and tee_preparation["expires_at"]:
+        remaining = int(tee_preparation["expires_at"] - datetime.utcnow().timestamp())
+        if remaining > 0:
+            response["expires_in"] = remaining
+            response["cached_until"] = datetime.utcfromtimestamp(tee_preparation["expires_at"]).isoformat() + "Z"
+        else:
+            # Expired, reset to idle
+            tee_preparation["state"] = "idle"
+            tee_preparation["proof_data"] = None
+            response["state"] = "idle"
+
+    return response
+
+
 @app.post("/api/tee/register")
 async def register_tee():
     """Register TEE with proof."""
