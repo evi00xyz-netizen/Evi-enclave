@@ -630,6 +630,44 @@ async def get_transaction_status(tx_hash: str):
         raise HTTPException(status_code=500, detail=f"Failed to check transaction: {str(e)}")
 
 
+@app.post("/api/tee/prepare")
+async def prepare_tee():
+    """Start background TEE attestation preparation."""
+    global tee_preparation
+
+    if not agent or not tee_auth:
+        raise HTTPException(status_code=503, detail="Agent not initialized")
+
+    if not agent.is_registered or not agent.agent_id:
+        raise HTTPException(status_code=400, detail="Agent must be registered first")
+
+    # If already ready and not expired, return current state
+    if tee_preparation["state"] == "ready" and tee_preparation["expires_at"]:
+        if datetime.utcnow().timestamp() < tee_preparation["expires_at"]:
+            return {
+                "state": "ready",
+                "message": "TEE proof already cached",
+                "expires_in": int(tee_preparation["expires_at"] - datetime.utcnow().timestamp())
+            }
+
+    # If already preparing, return current state
+    if tee_preparation["state"] == "preparing":
+        elapsed = int(datetime.utcnow().timestamp() - tee_preparation["started_at"])
+        return {
+            "state": "preparing",
+            "message": "TEE preparation in progress",
+            "elapsed_seconds": elapsed
+        }
+
+    # Start background preparation
+    asyncio.create_task(prepare_tee_attestation())
+
+    return {
+        "state": "preparing",
+        "message": "TEE preparation started"
+    }
+
+
 @app.post("/api/tee/register")
 async def register_tee():
     """Register TEE with proof."""
