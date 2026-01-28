@@ -578,12 +578,15 @@ async def register_agent():
         agent_id = address_check["agent_id"]
         agent.agent_id = agent_id
         agent.is_registered = True
+        # Auto-start TEE preparation for already registered agents
+        asyncio.create_task(prepare_tee_attestation())
         return {
             "success": True,
             "agent_id": agent_id,
             "already_registered": True,
             "domain": agent.config.domain,
-            "address": agent_address
+            "address": agent_address,
+            "tee_prep_started": True
         }
 
     # Check balance
@@ -605,7 +608,8 @@ async def register_agent():
             "success": True,
             "tx_hash": result["tx_hash"],
             "agent_address": result["agent_address"],
-            "domain": agent.config.domain
+            "domain": agent.config.domain,
+            "message": "Call /api/tee/prepare after registration confirms"
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
