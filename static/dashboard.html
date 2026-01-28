@@ -414,47 +414,125 @@
 
         async function registerTEE() {
             const content = document.getElementById('step4-content');
-            UIUtils.showLoading('step4-content', 'Verifying TEE...');
+            const TIMEOUT_MS = 60000; // 60 second timeout
+            let elapsedSeconds = 0;
+            let timerInterval = null;
 
-            const result = await apiClient.registerTEE();
+            // Helper to update the loading display with elapsed time
+            function updateLoadingDisplay() {
+                content.innerHTML = `
+                    <div class="flex items-center gap-3 mb-3">
+                        <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-400"></div>
+                        <p class="text-yellow-400">Verifying TEE... (${elapsedSeconds}s)</p>
+                    </div>
+                    <p class="text-sm text-gray-400">This may take up to 60 seconds.</p>
+                `;
+            }
 
-            if (result.success) {
-                const data = result.data;
+            // Helper to cleanup timer
+            function cleanupTimer() {
+                if (timerInterval) {
+                    clearInterval(timerInterval);
+                    timerInterval = null;
+                }
+            }
 
-                // Store tx_hash if present (not for already_registered case)
-                if (data.tx_hash) {
-                    state.teeTx = data.tx_hash;
+            // Show initial loading state
+            updateLoadingDisplay();
 
-                    // Show transaction link immediately
-                    const explorerUrl = data.explorer_url || (state.chainConfig
-                        ? UIUtils.getExplorerUrl(data.tx_hash, state.chainConfig.block_explorer_urls[0])
-                        : null);
+            // Start elapsed timer that updates every second
+            timerInterval = setInterval(() => {
+                elapsedSeconds++;
+                updateLoadingDisplay();
+            }, 1000);
 
-                    content.innerHTML = `
-                        <p class="text-yellow-400 mb-2">⏳ TEE Transaction Pending</p>
-                        <p class="text-sm text-gray-400 mb-1">TX: ${UIUtils.formatTxHash(data.tx_hash)}</p>
-                        ${explorerUrl ? `
-                            <a href="${explorerUrl}" target="_blank" rel="noopener noreferrer"
-                               class="text-blue-400 hover:text-blue-300 text-sm inline-block mb-2">
-                                → View on Explorer ↗
-                            </a>
-                        ` : ''}
-                        <p class="text-sm text-gray-500">Waiting for confirmation...</p>
-                    `;
+            // Create timeout promise
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => {
+                    reject(new Error('timeout'));
+                }, TIMEOUT_MS);
+            });
 
-                    // Wait a moment for transaction to be mined, then check status
-                    setTimeout(() => {
+            // Race between API call and timeout
+            try {
+                const result = await Promise.race([
+                    apiClient.registerTEE(),
+                    timeoutPromise
+                ]);
+
+                // Cleanup timer on completion
+                cleanupTimer();
+
+                if (result.success) {
+                    const data = result.data;
+
+                    // Store tx_hash if present (not for already_registered case)
+                    if (data.tx_hash) {
+                        state.teeTx = data.tx_hash;
+
+                        // Show transaction link immediately
+                        const explorerUrl = data.explorer_url || (state.chainConfig
+                            ? UIUtils.getExplorerUrl(data.tx_hash, state.chainConfig.block_explorer_urls[0])
+                            : null);
+
+                        content.innerHTML = `
+                            <p class="text-yellow-400 mb-2">TEE Transaction Pending</p>
+                            <p class="text-sm text-gray-400 mb-1">TX: ${UIUtils.formatTxHash(data.tx_hash)}</p>
+                            ${explorerUrl ? `
+                                <a href="${explorerUrl}" target="_blank" rel="noopener noreferrer"
+                                   class="text-blue-400 hover:text-blue-300 text-sm inline-block mb-2">
+                                    -> View on Explorer
+                                </a>
+                            ` : ''}
+                            <p class="text-sm text-gray-500">Waiting for confirmation...</p>
+                        `;
+
+                        // Wait a moment for transaction to be mined, then check status
+                        setTimeout(() => {
+                            UIUtils.showToast('TEE verified successfully!', 'success');
+                            checkTEE();
+                        }, 3000);
+                    } else {
+                        // Already registered case
                         UIUtils.showToast('TEE verified successfully!', 'success');
                         checkTEE();
-                    }, 3000);
+                    }
                 } else {
-                    // Already registered case
-                    UIUtils.showToast('TEE verified successfully!', 'success');
-                    checkTEE();
+                    // API returned error
+                    content.innerHTML = `
+                        <p class="text-red-400 mb-2">TEE Verification Failed</p>
+                        <p class="text-sm text-gray-400 mb-3">${result.error}</p>
+                        <button onclick="registerTEE()" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded">
+                            Retry Verification
+                        </button>
+                    `;
+                    UIUtils.showToast('TEE verification failed: ' + result.error, 'error');
                 }
-            } else {
-                UIUtils.showError('step4-content', result.error, registerTEE);
-                UIUtils.showToast('TEE verification failed: ' + result.error, 'error');
+            } catch (error) {
+                // Cleanup timer on error
+                cleanupTimer();
+
+                if (error.message === 'timeout') {
+                    // Timeout error
+                    content.innerHTML = `
+                        <p class="text-red-400 mb-2">Verification Timed Out</p>
+                        <p class="text-sm text-gray-400 mb-3">The verification took longer than 60 seconds. Please try again.</p>
+                        <button onclick="registerTEE()" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded">
+                            Retry Verification
+                        </button>
+                    `;
+                    UIUtils.showToast('Verification timed out', 'error');
+                } else {
+                    // Other unexpected error
+                    content.innerHTML = `
+                        <p class="text-red-400 mb-2">TEE Verification Failed</p>
+                        <p class="text-sm text-gray-400 mb-3">${error.message || 'An unexpected error occurred'}</p>
+                        <button onclick="registerTEE()" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded">
+                            Retry Verification
+                        </button>
+                    `;
+                    UIUtils.showToast('TEE verification failed: ' + error.message, 'error');
+                }
             }
         }
 
