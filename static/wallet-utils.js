@@ -297,6 +297,28 @@ class APIClient {
     async getTransactionStatus(txHash) {
         return this.get(`/api/transaction/${txHash}/status`);
     }
+
+    /**
+     * Get TEE preparation status
+     */
+    async getTEEStatus() {
+        return this.get('/api/tee/status');
+    }
+
+    /**
+     * Start TEE preparation
+     */
+    async prepareTEE() {
+        return this.post('/api/tee/prepare');
+    }
+
+    /**
+     * Get agent reputation
+     */
+    async getReputation(agentId = null) {
+        const endpoint = agentId ? `/api/reputation/${agentId}` : '/api/reputation';
+        return this.get(endpoint);
+    }
 }
 
 /**
