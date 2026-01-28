@@ -73,6 +73,100 @@ tee_preparation = {
 TEE_CACHE_DURATION = 300  # 5 minutes
 
 
+async def prepare_tee_attestation():
+    """Background task to prepare TEE attestation and offchain proof."""
+    global tee_preparation
+
+    # Don't restart if already preparing or ready (and not expired)
+    if tee_preparation["state"] == "preparing":
+        return
+    if tee_preparation["state"] == "ready" and tee_preparation["expires_at"]:
+        if datetime.utcnow().timestamp() < tee_preparation["expires_at"]:
+            return
+
+    # Check prerequisites
+    if not agent or not tee_auth or not agent.is_registered or not agent.agent_id:
+        tee_preparation["state"] = "error"
+        tee_preparation["error"] = "Agent not registered"
+        return
+
+    tee_preparation["state"] = "preparing"
+    tee_preparation["started_at"] = datetime.utcnow().timestamp()
+    tee_preparation["error"] = None
+
+    try:
+        # Step 1: Get TEE attestation
+        attestation = await tee_auth.get_attestation()
+
+        if "error" in attestation:
+            raise Exception(f"Attestation failed: {attestation.get('error')}")
+
+        if attestation.get("mode") == "development":
+            raise Exception("TEE is disabled in development mode")
+
+        if "quote" not in attestation or "event_log" not in attestation:
+            raise Exception(f"Invalid attestation: missing fields")
+
+        # Step 2: Get agent info
+        agent_address = await agent._get_agent_address()
+        agent_domain = os.getenv('AGENT_DOMAIN', '')
+
+        # Strip protocol prefixes
+        for prefix in ['https://', 'http://', 'ipfs://', 'ipns://']:
+            if agent_domain.startswith(prefix):
+                agent_domain = agent_domain[len(prefix):]
+
+        # Parse domain
+        if '-' in agent_domain and '.' in agent_domain:
+            app_id = agent_domain.split('-')[0]
+            dstack_domain = agent_domain.split('.', 1)[1]
+        else:
+            app_id = agent_domain.split(':')[0].split('.')[0]
+            dstack_domain = os.getenv('DSTACK_GATEWAY_DOMAIN', 'local.dev')
+
+        # Step 3: Get offchain proof
+        import httpx
+        from web3 import Web3
+
+        payload = {
+            'agentId': agent.agent_id,
+            'agentPubkey': agent_address,
+            'tdxQuote': attestation['quote'],
+            'appId': app_id,
+            'dstackDomain': dstack_domain,
+        }
+
+        print(f"🔄 TEE Prep: Requesting offchain proof...")
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                'https://194622febfc33d67e4a98f365dbc2fe9d0d53933-3000.dstack-pha-prod9.phala.network/getOffchainProof',
+                json=payload
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        # Cache the proof data
+        tee_preparation["proof_data"] = {
+            "tee_arch": Web3.to_bytes(text="TDX_DSTACK").ljust(32, b'\x00'),
+            "code_measurement": data['codeMeasurement'],
+            "code_config_uri": data['codeConfigUri'],
+            "proof": data['proof'],
+            "pubkey": Web3.to_checksum_address(agent_address)
+        }
+        tee_preparation["state"] = "ready"
+        tee_preparation["expires_at"] = datetime.utcnow().timestamp() + TEE_CACHE_DURATION
+        tee_preparation["error"] = None
+
+        print(f"✅ TEE Prep: Proof cached, expires in {TEE_CACHE_DURATION}s")
+
+    except Exception as e:
+        print(f"❌ TEE Prep failed: {str(e)}")
+        tee_preparation["state"] = "error"
+        tee_preparation["error"] = str(e)
+        tee_preparation["proof_data"] = None
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize agent on startup."""
