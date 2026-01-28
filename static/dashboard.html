@@ -30,47 +30,25 @@
                 </div>
             </div>
 
-            <!-- Step 2: Registration -->
+            <!-- Step 2: Unified Registration -->
             <div id="step2" class="bg-gray-800 rounded-lg p-6 opacity-50">
                 <div class="flex items-center gap-4 mb-4">
                     <div id="step2-status" class="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center">2</div>
-                    <h2 class="text-2xl font-bold">Identity Registration</h2>
+                    <h2 class="text-2xl font-bold">Register Your Agent</h2>
                 </div>
                 <div id="step2-content" class="ml-12">
                     <p class="text-gray-400">Waiting for wallet funding...</p>
                 </div>
             </div>
 
-            <!-- Step 3: Reputation -->
+            <!-- Step 3: Agent Status (was Step 5) -->
             <div id="step3" class="bg-gray-800 rounded-lg p-6 opacity-50">
                 <div class="flex items-center gap-4 mb-4">
                     <div id="step3-status" class="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center">3</div>
-                    <h2 class="text-2xl font-bold">Reputation</h2>
+                    <h2 class="text-2xl font-bold">Agent Status</h2>
                 </div>
                 <div id="step3-content" class="ml-12">
                     <p class="text-gray-400">Waiting for registration...</p>
-                </div>
-            </div>
-
-            <!-- Step 4: TEE Verification -->
-            <div id="step4" class="bg-gray-800 rounded-lg p-6 opacity-50">
-                <div class="flex items-center gap-4 mb-4">
-                    <div id="step4-status" class="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center">4</div>
-                    <h2 class="text-2xl font-bold">TEE Verification</h2>
-                </div>
-                <div id="step4-content" class="ml-12">
-                    <p class="text-gray-400">Waiting for registration...</p>
-                </div>
-            </div>
-
-            <!-- Step 5: Agent Ready -->
-            <div id="step5" class="bg-gray-800 rounded-lg p-6 opacity-50">
-                <div class="flex items-center gap-4 mb-4">
-                    <div id="step5-status" class="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center">5</div>
-                    <h2 class="text-2xl font-bold">Agent Status</h2>
-                </div>
-                <div id="step5-content" class="ml-12">
-                    <p class="text-gray-400">Waiting for TEE verification...</p>
                 </div>
             </div>
         </div>
@@ -84,8 +62,16 @@
             registration: null,
             tee: null,
             chainConfig: null,
-            registrationTx: null,  // Store registration tx_hash for persistence
-            teeTx: null            // Store TEE tx_hash for persistence
+            registrationTx: null,
+            teeTx: null,
+            reputationTx: null,
+            // Unified registration flow state
+            unifiedRegistration: {
+                started: false,
+                identity: { status: 'waiting', message: 'Waiting...', txHash: null, agentId: null },
+                reputation: { status: 'waiting', message: 'Waiting for identity...', txHash: null },
+                tee: { status: 'waiting', message: 'Waiting for identity...', txHash: null }
+            }
         };
 
         // Load chain config for explorer URLs
@@ -97,6 +83,129 @@
         }
 
         loadChainConfig();
+
+        function renderStatusCard(id, title, statusData) {
+            const icons = {
+                waiting: '○',
+                in_progress: '',  // Will use spinner
+                success: '✓',
+                error: '✕'
+            };
+
+            const colors = {
+                waiting: 'text-gray-400',
+                in_progress: 'text-blue-400',
+                success: 'text-green-400',
+                error: 'text-red-400'
+            };
+
+            const bgColors = {
+                waiting: 'bg-gray-600',
+                in_progress: 'bg-blue-600',
+                success: 'bg-green-600',
+                error: 'bg-red-600'
+            };
+
+            const status = statusData.status;
+            const isSpinner = status === 'in_progress';
+
+            const iconHtml = isSpinner
+                ? '<div class="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>'
+                : icons[status];
+
+            const txLinkHtml = statusData.txHash && state.chainConfig ? `
+                <a href="${UIUtils.getExplorerUrl(statusData.txHash, state.chainConfig.block_explorer_urls[0])}"
+                   target="_blank" rel="noopener noreferrer"
+                   class="text-blue-400 hover:text-blue-300 text-xs">
+                    View tx: ${UIUtils.formatTxHash(statusData.txHash)} ↗
+                </a>
+            ` : '';
+
+            const retryHtml = status === 'error' ? `
+                <button onclick="retry${id}()" class="bg-red-600 hover:bg-red-700 px-3 py-1 rounded text-xs mt-2">
+                    Retry
+                </button>
+            ` : '';
+
+            return `
+                <div class="bg-gray-700 rounded-lg p-4 flex items-start gap-4">
+                    <div class="w-6 h-6 rounded-full ${bgColors[status]} flex items-center justify-center text-sm flex-shrink-0">
+                        ${iconHtml}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <h3 class="font-semibold ${colors[status]}">${title}</h3>
+                        <p class="text-sm text-gray-400 mt-1">${statusData.message}</p>
+                        ${txLinkHtml}
+                        ${retryHtml}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderUnifiedRegistration() {
+            const content = document.getElementById('step2-content');
+            const reg = state.unifiedRegistration;
+
+            if (!reg.started) {
+                // Not started - show register button
+                content.innerHTML = `
+                    <p class="text-sm text-gray-400 mb-4">Register your agent on-chain for Identity, Reputation, and TEE verification.</p>
+                    <button onclick="startUnifiedRegistration()" class="bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded font-semibold">
+                        Register Agent
+                    </button>
+                `;
+                return;
+            }
+
+            // Registration in progress - show status cards
+            const cardsHtml = `
+                <div class="space-y-3 mb-6">
+                    ${renderStatusCard('Identity', 'Identity Registry', reg.identity)}
+                    ${renderStatusCard('Reputation', 'Reputation', reg.reputation)}
+                    ${renderStatusCard('Tee', 'TEE Verification', reg.tee)}
+                </div>
+            `;
+
+            // Determine button state
+            const identityDone = reg.identity.status === 'success';
+            const reputationDone = reg.reputation.status === 'success';
+            const teeDone = reg.tee.status === 'success';
+            const canProceed = identityDone && reputationDone;
+            const allDone = identityDone && reputationDone && teeDone;
+
+            let buttonHtml = '';
+            let statusMessageHtml = '';
+
+            if (canProceed) {
+                buttonHtml = `
+                    <button onclick="goToDeveloperDashboard()" class="bg-green-600 hover:bg-green-700 px-6 py-3 rounded font-semibold w-full">
+                        Go to Developer Dashboard →
+                    </button>
+                `;
+
+                if (!teeDone) {
+                    statusMessageHtml = `
+                        <p class="text-yellow-400 text-sm mt-3 flex items-center gap-2">
+                            <span class="animate-pulse">⚠</span>
+                            TEE verification still in progress (completes in background)
+                        </p>
+                    `;
+                } else {
+                    statusMessageHtml = `
+                        <p class="text-green-400 text-sm mt-3">✓ All registrations complete</p>
+                    `;
+                }
+            } else {
+                // Still in progress
+                buttonHtml = `
+                    <button disabled class="bg-gray-600 px-6 py-3 rounded font-semibold w-full cursor-not-allowed opacity-50">
+                        Registering...
+                    </button>
+                `;
+            }
+
+            content.innerHTML = cardsHtml + buttonHtml + statusMessageHtml;
+        }
 
         async function loadWallet() {
             const step1 = document.getElementById('step1');
@@ -135,9 +244,312 @@
             }
         }
 
+        async function startUnifiedRegistration() {
+            const reg = state.unifiedRegistration;
+            reg.started = true;
+
+            // Update identity to in_progress
+            reg.identity.status = 'in_progress';
+            reg.identity.message = 'Broadcasting transaction...';
+            renderUnifiedRegistration();
+
+            // Step 1: Identity registration (blocking)
+            try {
+                const identityResult = await registerIdentity();
+
+                if (!identityResult.success) {
+                    reg.identity.status = 'error';
+                    reg.identity.message = identityResult.error || 'Registration failed';
+                    renderUnifiedRegistration();
+                    return;
+                }
+
+                reg.identity.status = 'success';
+                reg.identity.message = `Registered (ID: ${identityResult.agentId})`;
+                reg.identity.txHash = identityResult.txHash;
+                reg.identity.agentId = identityResult.agentId;
+                state.registrationTx = identityResult.txHash;
+
+                // Update reputation and TEE to in_progress
+                reg.reputation.status = 'in_progress';
+                reg.reputation.message = 'Submitting initial entry...';
+                reg.tee.status = 'in_progress';
+                reg.tee.message = 'Preparing attestation...';
+                renderUnifiedRegistration();
+
+                // Step 2: Start Reputation and TEE in parallel
+                const [reputationPromise, teePromise] = [
+                    registerReputationFlow(),
+                    registerTEEFlow()
+                ];
+
+                // Handle reputation result
+                reputationPromise.then(result => {
+                    if (result.success) {
+                        reg.reputation.status = 'success';
+                        reg.reputation.message = 'Confirmed';
+                        reg.reputation.txHash = result.txHash;
+                        state.reputationTx = result.txHash;
+                    } else {
+                        reg.reputation.status = 'error';
+                        reg.reputation.message = result.error || 'Failed';
+                    }
+                    renderUnifiedRegistration();
+                });
+
+                // Handle TEE result
+                teePromise.then(result => {
+                    if (result.success) {
+                        reg.tee.status = 'success';
+                        reg.tee.message = 'Verified';
+                        reg.tee.txHash = result.txHash;
+                        state.teeTx = result.txHash;
+                    } else {
+                        reg.tee.status = 'error';
+                        reg.tee.message = result.error || 'Failed';
+                    }
+                    renderUnifiedRegistration();
+
+                    // If all done, update step 3
+                    if (reg.identity.status === 'success' &&
+                        reg.reputation.status === 'success' &&
+                        reg.tee.status === 'success') {
+                        markAgentReady();
+                    }
+                });
+
+            } catch (error) {
+                reg.identity.status = 'error';
+                reg.identity.message = error.message || 'Unexpected error';
+                renderUnifiedRegistration();
+            }
+        }
+
+        async function registerIdentity() {
+            const result = await apiClient.registerAgent();
+
+            if (!result.success) {
+                return { success: false, error: result.error };
+            }
+
+            const data = result.data;
+
+            // If already registered, return immediately
+            if (data.already_registered && data.agent_id) {
+                return {
+                    success: true,
+                    agentId: data.agent_id,
+                    txHash: null,
+                    alreadyRegistered: true
+                };
+            }
+
+            const txHash = data.tx_hash;
+
+            // Poll for confirmation
+            const txStatus = await pollTransactionStatus(txHash, {
+                onUpdate: (status) => {
+                    if (status.status === 'pending') {
+                        state.unifiedRegistration.identity.message = `Confirming... (attempt ${status.attempts})`;
+                        renderUnifiedRegistration();
+                    }
+                }
+            });
+
+            if (txStatus && txStatus.success && txStatus.agent_id) {
+                return {
+                    success: true,
+                    agentId: txStatus.agent_id,
+                    txHash: txHash
+                };
+            } else if (txStatus && txStatus.status === 'failed') {
+                return { success: false, error: 'Transaction failed' };
+            } else {
+                return { success: false, error: 'Transaction confirmation timeout' };
+            }
+        }
+
+        async function registerReputationFlow() {
+            try {
+                const result = await apiClient.submitInitialReputation();
+
+                if (!result.success) {
+                    return { success: false, error: result.error };
+                }
+
+                return {
+                    success: true,
+                    txHash: result.data.tx_hash,
+                    confirmed: result.data.confirmed
+                };
+            } catch (error) {
+                return { success: false, error: error.message || 'Reputation submission failed' };
+            }
+        }
+
+        async function registerTEEFlow() {
+            try {
+                // First prepare TEE attestation
+                const prepResult = await apiClient.prepareTEE();
+
+                if (!prepResult.success) {
+                    return { success: false, error: prepResult.error || 'TEE preparation failed' };
+                }
+
+                // Poll for preparation to complete
+                let prepared = false;
+                let attempts = 0;
+                const maxAttempts = 40; // ~2 minutes at 3s intervals
+
+                while (!prepared && attempts < maxAttempts) {
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    attempts++;
+
+                    const statusResult = await apiClient.getTEEStatus();
+
+                    if (statusResult.success) {
+                        if (statusResult.data.state === 'ready') {
+                            prepared = true;
+                        } else if (statusResult.data.state === 'error') {
+                            return { success: false, error: statusResult.data.error || 'TEE preparation failed' };
+                        } else {
+                            // Still preparing - update message
+                            state.unifiedRegistration.tee.message = `Preparing attestation... (${statusResult.data.elapsed_seconds || 0}s)`;
+                            renderUnifiedRegistration();
+                        }
+                    }
+                }
+
+                if (!prepared) {
+                    return { success: false, error: 'TEE preparation timeout' };
+                }
+
+                // Now submit TEE verification
+                state.unifiedRegistration.tee.message = 'Submitting proof...';
+                renderUnifiedRegistration();
+
+                const teeResult = await apiClient.registerTEE();
+
+                if (!teeResult.success) {
+                    return { success: false, error: teeResult.error || 'TEE verification failed' };
+                }
+
+                return {
+                    success: true,
+                    txHash: teeResult.data.tx_hash
+                };
+            } catch (error) {
+                return { success: false, error: error.message || 'TEE verification failed' };
+            }
+        }
+
+        async function retryIdentity() {
+            state.unifiedRegistration.identity.status = 'in_progress';
+            state.unifiedRegistration.identity.message = 'Retrying...';
+            renderUnifiedRegistration();
+
+            const result = await registerIdentity();
+
+            if (result.success) {
+                state.unifiedRegistration.identity.status = 'success';
+                state.unifiedRegistration.identity.message = `Registered (ID: ${result.agentId})`;
+                state.unifiedRegistration.identity.agentId = result.agentId;
+                state.unifiedRegistration.identity.txHash = result.txHash;
+
+                // Trigger parallel flows if not already done
+                if (state.unifiedRegistration.reputation.status === 'waiting') {
+                    state.unifiedRegistration.reputation.status = 'in_progress';
+                    state.unifiedRegistration.reputation.message = 'Submitting initial entry...';
+                    registerReputationFlow().then(handleReputationResult);
+                }
+                if (state.unifiedRegistration.tee.status === 'waiting') {
+                    state.unifiedRegistration.tee.status = 'in_progress';
+                    state.unifiedRegistration.tee.message = 'Preparing attestation...';
+                    registerTEEFlow().then(handleTeeResult);
+                }
+            } else {
+                state.unifiedRegistration.identity.status = 'error';
+                state.unifiedRegistration.identity.message = result.error;
+            }
+            renderUnifiedRegistration();
+        }
+
+        async function retryReputation() {
+            state.unifiedRegistration.reputation.status = 'in_progress';
+            state.unifiedRegistration.reputation.message = 'Retrying...';
+            renderUnifiedRegistration();
+
+            const result = await registerReputationFlow();
+            handleReputationResult(result);
+        }
+
+        async function retryTee() {
+            state.unifiedRegistration.tee.status = 'in_progress';
+            state.unifiedRegistration.tee.message = 'Retrying...';
+            renderUnifiedRegistration();
+
+            const result = await registerTEEFlow();
+            handleTeeResult(result);
+        }
+
+        function handleReputationResult(result) {
+            const reg = state.unifiedRegistration;
+            if (result.success) {
+                reg.reputation.status = 'success';
+                reg.reputation.message = 'Confirmed';
+                reg.reputation.txHash = result.txHash;
+                state.reputationTx = result.txHash;
+            } else {
+                reg.reputation.status = 'error';
+                reg.reputation.message = result.error || 'Failed';
+            }
+            renderUnifiedRegistration();
+        }
+
+        function handleTeeResult(result) {
+            const reg = state.unifiedRegistration;
+            if (result.success) {
+                reg.tee.status = 'success';
+                reg.tee.message = 'Verified';
+                reg.tee.txHash = result.txHash;
+                state.teeTx = result.txHash;
+
+                // Check if all done
+                if (reg.identity.status === 'success' && reg.reputation.status === 'success') {
+                    markAgentReady();
+                }
+            } else {
+                reg.tee.status = 'error';
+                reg.tee.message = result.error || 'Failed';
+            }
+            renderUnifiedRegistration();
+        }
+
+        function goToDeveloperDashboard() {
+            const reg = state.unifiedRegistration;
+
+            // Validate requirements
+            if (!reg.identity.agentId) {
+                UIUtils.showToast('Agent ID not found. Please complete registration.', 'error');
+                return;
+            }
+
+            if (reg.identity.status !== 'success') {
+                UIUtils.showToast('Identity registration not complete.', 'error');
+                return;
+            }
+
+            if (reg.reputation.status !== 'success') {
+                UIUtils.showToast('Reputation submission not complete.', 'error');
+                return;
+            }
+
+            // Navigate to developer dashboard
+            window.location.href = '/developer';
+        }
+
         async function checkRegistration() {
             const step2 = document.getElementById('step2');
-            const content = document.getElementById('step2-content');
             const status = document.getElementById('step2-status');
 
             const result = await apiClient.getStatus();
@@ -151,406 +563,63 @@
             console.log('Registration check:', data.agent);
 
             if (data.agent.is_registered && data.agent.agent_id) {
+                // Already registered - show completed state
                 step2.className = 'bg-gray-800 rounded-lg p-6';
                 status.className = 'w-8 h-8 rounded-full bg-green-600 flex items-center justify-center';
                 status.innerHTML = '✓';
 
-                // Build transaction link if we have tx_hash in state
-                const txLinkHtml = state.registrationTx && state.chainConfig ? `
-                    <p class="text-sm text-gray-400 mb-1">TX: ${UIUtils.formatTxHash(state.registrationTx)}</p>
-                    <a href="${UIUtils.getExplorerUrl(state.registrationTx, state.chainConfig.block_explorer_urls[0])}"
-                       target="_blank" rel="noopener noreferrer"
-                       class="text-blue-400 hover:text-blue-300 text-sm inline-block mb-2">
-                        → View on Explorer ↗
-                    </a>
-                ` : '';
+                // Update unified registration state
+                state.unifiedRegistration.started = true;
+                state.unifiedRegistration.identity.status = 'success';
+                state.unifiedRegistration.identity.message = `Registered (ID: ${data.agent.agent_id})`;
+                state.unifiedRegistration.identity.agentId = data.agent.agent_id;
 
-                content.innerHTML = `
-                    <p class="text-green-400 mb-2">✓ Agent Registered</p>
-                    <p class="text-sm text-gray-400">Agent ID: ${data.agent.agent_id}</p>
-                    <p class="text-sm text-gray-400">Domain: ${data.agent.domain}</p>
-                    ${txLinkHtml}
-                `;
+                // Check TEE status
+                if (data.agent.tee_verified) {
+                    state.unifiedRegistration.tee.status = 'success';
+                    state.unifiedRegistration.tee.message = 'Verified';
+                }
+
+                // For reputation, we'll assume it's done if agent is registered
+                // (In real usage, could check subgraph for init feedback)
+                state.unifiedRegistration.reputation.status = 'success';
+                state.unifiedRegistration.reputation.message = 'Confirmed';
+
                 state.registration = data.agent;
+                renderUnifiedRegistration();
+
                 document.getElementById('step3').classList.remove('opacity-50');
-                checkReputation();
+
+                if (data.agent.tee_verified) {
+                    markAgentReady();
+                }
             } else {
-                content.innerHTML = `
-                    <p class="text-sm text-gray-400 mb-2">Address: ${data.agent.address}</p>
-                    <button onclick="register()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">
-                        Register On-Chain
-                    </button>
-                `;
+                // Not registered - show register button
+                step2.className = 'bg-gray-800 rounded-lg p-6';
+                renderUnifiedRegistration();
             }
         }
 
-        async function checkReputation() {
+        function markAgentReady() {
             const step3 = document.getElementById('step3');
             const content = document.getElementById('step3-content');
             const status = document.getElementById('step3-status');
 
-            // Always enable step 3 visually
             step3.className = 'bg-gray-800 rounded-lg p-6';
-
-            const result = await apiClient.getReputation();
-
-            if (!result.success) {
-                // Reputation check failed - show warning but continue to TEE
-                status.className = 'w-8 h-8 rounded-full bg-yellow-600 flex items-center justify-center';
-                status.innerHTML = '!';
-                content.innerHTML = `
-                    <p class="text-yellow-400 mb-2">⚠ Reputation Unavailable</p>
-                    <p class="text-sm text-gray-400 mb-2">${result.error}</p>
-                    <button onclick="checkReputation()" class="bg-gray-600 hover:bg-gray-700 px-3 py-1 rounded text-sm">
-                        Retry
-                    </button>
-                `;
-                // Still enable step 4 - reputation is informational only
-                document.getElementById('step4').classList.remove('opacity-50');
-                checkTEE();
-                return;
-            }
-
-            const data = result.data;
-            const rep = data.reputation || {};
-            const feedbackCount = rep.feedbackCount || 0;
-            const avgScore = rep.averageScore || 0;
-
-            // Mark step as complete
-            status.className = 'w-8 h-8 rounded-full bg-green-600 flex items-center justify-center';
-            status.innerHTML = '✓';
-
-            if (feedbackCount > 0) {
-                // Has reputation data
-                content.innerHTML = `
-                    <p class="text-green-400 mb-2">✓ Reputation Active</p>
-                    <p class="text-sm text-gray-400">Average Score: ${avgScore}</p>
-                    <p class="text-sm text-gray-400">Feedback Count: ${feedbackCount}</p>
-                `;
-            } else {
-                // No feedback yet - this is normal for new agents
-                content.innerHTML = `
-                    <p class="text-green-400 mb-2">✓ Ready for Feedback</p>
-                    <p class="text-sm text-gray-400">Your reputation will build as users interact with your agent.</p>
-                `;
-            }
-
-            // Enable step 4 and continue to TEE verification
-            document.getElementById('step4').classList.remove('opacity-50');
-            checkTEE();
-        }
-
-        // Track TEE polling interval
-        let teePollingInterval = null;
-
-        async function checkTEE() {
-            const step4 = document.getElementById('step4');
-            const content = document.getElementById('step4-content');
-            const status = document.getElementById('step4-status');
-
-            // First check if already verified
-            const statusResult = await apiClient.getStatus();
-
-            if (!statusResult.success) {
-                UIUtils.showError('step4-content', statusResult.error, checkTEE);
-                return;
-            }
-
-            const agentData = statusResult.data;
-
-            if (agentData.agent.tee_verified) {
-                // Already verified - show checkmark
-                clearTEEPolling();
-                step4.className = 'bg-gray-800 rounded-lg p-6';
-                status.className = 'w-8 h-8 rounded-full bg-green-600 flex items-center justify-center';
-                status.innerHTML = '✓';
-
-                // Build transaction link if we have tx_hash in state
-                const txLinkHtml = state.teeTx && state.chainConfig ? `
-                    <p class="text-sm text-gray-400 mb-1">TX: ${UIUtils.formatTxHash(state.teeTx)}</p>
-                    <a href="${UIUtils.getExplorerUrl(state.teeTx, state.chainConfig.block_explorer_urls[0])}"
-                       target="_blank" rel="noopener noreferrer"
-                       class="text-blue-400 hover:text-blue-300 text-sm inline-block mb-2">
-                        → View on Explorer ↗
-                    </a>
-                ` : '';
-
-                content.innerHTML = `
-                    <p class="text-green-400 mb-2">✓ TEE Verified</p>
-                    <p class="text-sm text-gray-400">Agent ID: ${agentData.agent.agent_id}</p>
-                    ${txLinkHtml}
-                `;
-                document.getElementById('step5').classList.remove('opacity-50');
-                markAgentReady();
-                return;
-            }
-
-            // Not verified - check TEE preparation status
-            const teeResult = await apiClient.getTEEStatus();
-
-            if (!teeResult.success) {
-                UIUtils.showError('step4-content', teeResult.error, checkTEE);
-                return;
-            }
-
-            const teeStatus = teeResult.data;
-            renderTEEStatus(teeStatus);
-        }
-
-        function renderTEEStatus(teeStatus) {
-            const content = document.getElementById('step4-content');
-
-            switch (teeStatus.state) {
-                case 'ready':
-                    // Proof is cached and ready - show fast submit button
-                    clearTEEPolling();
-                    const expiresText = teeStatus.expires_in > 0
-                        ? `Expires in ${Math.floor(teeStatus.expires_in / 60)}m ${teeStatus.expires_in % 60}s`
-                        : '';
-                    content.innerHTML = `
-                        <p class="text-green-400 mb-2">✓ Proof Ready</p>
-                        <p class="text-sm text-gray-400 mb-3">${expiresText}</p>
-                        <button onclick="registerTEE()" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded">
-                            Submit TEE Verification
-                        </button>
-                    `;
-                    break;
-
-                case 'preparing':
-                    // Show progress with elapsed time
-                    content.innerHTML = `
-                        <div class="flex items-center gap-3 mb-3">
-                            <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-400"></div>
-                            <p class="text-yellow-400">Preparing TEE attestation... (${teeStatus.elapsed_seconds || 0}s)</p>
-                        </div>
-                        <p class="text-sm text-gray-400 mb-3">This typically takes 20-30 seconds.</p>
-                        <button disabled class="bg-gray-600 px-4 py-2 rounded cursor-not-allowed opacity-50">
-                            Please wait...
-                        </button>
-                    `;
-                    // Start polling if not already
-                    startTEEPolling();
-                    break;
-
-                case 'error':
-                    // Show error with retry button
-                    clearTEEPolling();
-                    content.innerHTML = `
-                        <p class="text-red-400 mb-2">✗ Preparation Failed</p>
-                        <p class="text-sm text-gray-400 mb-3">${teeStatus.error || 'Unknown error occurred'}</p>
-                        <button onclick="retryTEEPreparation()" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded">
-                            Retry Preparation
-                        </button>
-                    `;
-                    break;
-
-                case 'idle':
-                default:
-                    // No preparation started - show verify button (starts full flow)
-                    clearTEEPolling();
-                    content.innerHTML = `
-                        <p class="text-sm text-gray-400 mb-3">TEE attestation not yet prepared.</p>
-                        <button onclick="startTEEPreparation()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded mr-2">
-                            Prepare TEE
-                        </button>
-                        <button onclick="registerTEE()" class="bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded">
-                            Verify TEE (Full Flow)
-                        </button>
-                    `;
-                    break;
-            }
-        }
-
-        function startTEEPolling() {
-            if (teePollingInterval) return; // Already polling
-            teePollingInterval = setInterval(async () => {
-                const result = await apiClient.getTEEStatus();
-                if (result.success) {
-                    renderTEEStatus(result.data);
-                    // If state changed to ready or error, checkTEE will clear polling
-                    if (result.data.state === 'ready') {
-                        clearTEEPolling();
-                    }
-                }
-            }, 3000);
-        }
-
-        function clearTEEPolling() {
-            if (teePollingInterval) {
-                clearInterval(teePollingInterval);
-                teePollingInterval = null;
-            }
-        }
-
-        async function startTEEPreparation() {
-            const content = document.getElementById('step4-content');
-            content.innerHTML = `
-                <div class="flex items-center gap-3 mb-3">
-                    <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-400"></div>
-                    <p class="text-yellow-400">Starting TEE preparation...</p>
-                </div>
-            `;
-
-            const result = await apiClient.prepareTEE();
-
-            if (result.success) {
-                // Start polling for status updates
-                startTEEPolling();
-                // Immediately render current status
-                const statusResult = await apiClient.getTEEStatus();
-                if (statusResult.success) {
-                    renderTEEStatus(statusResult.data);
-                }
-            } else {
-                UIUtils.showError('step4-content', result.error, startTEEPreparation);
-                UIUtils.showToast('TEE preparation failed: ' + result.error, 'error');
-            }
-        }
-
-        async function retryTEEPreparation() {
-            // Same as startTEEPreparation
-            await startTEEPreparation();
-        }
-
-        function markAgentReady() {
-            const step5 = document.getElementById('step5');
-            const content = document.getElementById('step5-content');
-            const status = document.getElementById('step5-status');
-
-            step5.className = 'bg-gray-800 rounded-lg p-6';
             status.className = 'w-8 h-8 rounded-full bg-green-600 flex items-center justify-center';
             status.innerHTML = '✓';
             content.innerHTML = `
                 <p class="text-green-400 mb-2">✓ Agent Ready</p>
-                <p class="text-sm text-gray-400">A2A endpoints active</p>
-                <a href="/agent.json" class="text-blue-400 hover:text-blue-300 text-sm">
-                    → View Agent Card
-                </a>
+                <p class="text-sm text-gray-400 mb-3">A2A endpoints active</p>
+                <div class="flex gap-3">
+                    <a href="/agent.json" class="text-blue-400 hover:text-blue-300 text-sm">
+                        → View Agent Card
+                    </a>
+                    <a href="/developer" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm">
+                        Developer Dashboard
+                    </a>
+                </div>
             `;
-        }
-
-        async function registerTEE() {
-            const content = document.getElementById('step4-content');
-            const TIMEOUT_MS = 60000; // 60 second timeout
-            let elapsedSeconds = 0;
-            let timerInterval = null;
-
-            // Helper to update the loading display with elapsed time
-            function updateLoadingDisplay() {
-                content.innerHTML = `
-                    <div class="flex items-center gap-3 mb-3">
-                        <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-400"></div>
-                        <p class="text-yellow-400">Verifying TEE... (${elapsedSeconds}s)</p>
-                    </div>
-                    <p class="text-sm text-gray-400">This may take up to 60 seconds.</p>
-                `;
-            }
-
-            // Helper to cleanup timer
-            function cleanupTimer() {
-                if (timerInterval) {
-                    clearInterval(timerInterval);
-                    timerInterval = null;
-                }
-            }
-
-            // Show initial loading state
-            updateLoadingDisplay();
-
-            // Start elapsed timer that updates every second
-            timerInterval = setInterval(() => {
-                elapsedSeconds++;
-                updateLoadingDisplay();
-            }, 1000);
-
-            // Create timeout promise
-            const timeoutPromise = new Promise((_, reject) => {
-                setTimeout(() => {
-                    reject(new Error('timeout'));
-                }, TIMEOUT_MS);
-            });
-
-            // Race between API call and timeout
-            try {
-                const result = await Promise.race([
-                    apiClient.registerTEE(),
-                    timeoutPromise
-                ]);
-
-                // Cleanup timer on completion
-                cleanupTimer();
-
-                if (result.success) {
-                    const data = result.data;
-
-                    // Store tx_hash if present (not for already_registered case)
-                    if (data.tx_hash) {
-                        state.teeTx = data.tx_hash;
-
-                        // Show transaction link immediately
-                        const explorerUrl = data.explorer_url || (state.chainConfig
-                            ? UIUtils.getExplorerUrl(data.tx_hash, state.chainConfig.block_explorer_urls[0])
-                            : null);
-
-                        content.innerHTML = `
-                            <p class="text-yellow-400 mb-2">TEE Transaction Pending</p>
-                            <p class="text-sm text-gray-400 mb-1">TX: ${UIUtils.formatTxHash(data.tx_hash)}</p>
-                            ${explorerUrl ? `
-                                <a href="${explorerUrl}" target="_blank" rel="noopener noreferrer"
-                                   class="text-blue-400 hover:text-blue-300 text-sm inline-block mb-2">
-                                    -> View on Explorer
-                                </a>
-                            ` : ''}
-                            <p class="text-sm text-gray-500">Waiting for confirmation...</p>
-                        `;
-
-                        // Wait a moment for transaction to be mined, then check status
-                        setTimeout(() => {
-                            UIUtils.showToast('TEE verified successfully!', 'success');
-                            checkTEE();
-                        }, 3000);
-                    } else {
-                        // Already registered case
-                        UIUtils.showToast('TEE verified successfully!', 'success');
-                        checkTEE();
-                    }
-                } else {
-                    // API returned error
-                    content.innerHTML = `
-                        <p class="text-red-400 mb-2">TEE Verification Failed</p>
-                        <p class="text-sm text-gray-400 mb-3">${result.error}</p>
-                        <button onclick="registerTEE()" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded">
-                            Retry Verification
-                        </button>
-                    `;
-                    UIUtils.showToast('TEE verification failed: ' + result.error, 'error');
-                }
-            } catch (error) {
-                // Cleanup timer on error
-                cleanupTimer();
-
-                if (error.message === 'timeout') {
-                    // Timeout error
-                    content.innerHTML = `
-                        <p class="text-red-400 mb-2">Verification Timed Out</p>
-                        <p class="text-sm text-gray-400 mb-3">The verification took longer than 60 seconds. Please try again.</p>
-                        <button onclick="registerTEE()" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded">
-                            Retry Verification
-                        </button>
-                    `;
-                    UIUtils.showToast('Verification timed out', 'error');
-                } else {
-                    // Other unexpected error
-                    content.innerHTML = `
-                        <p class="text-red-400 mb-2">TEE Verification Failed</p>
-                        <p class="text-sm text-gray-400 mb-3">${error.message || 'An unexpected error occurred'}</p>
-                        <button onclick="registerTEE()" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded">
-                            Retry Verification
-                        </button>
-                    `;
-                    UIUtils.showToast('TEE verification failed: ' + error.message, 'error');
-                }
-            }
         }
 
         async function pollTransactionStatus(txHash, options = {}) {
@@ -596,92 +665,6 @@
             };
 
             return poll();
-        }
-
-        async function register() {
-            const content = document.getElementById('step2-content');
-            UIUtils.showLoading('step2-content', 'Broadcasting transaction...');
-
-            const result = await apiClient.registerAgent();
-
-            console.log('Registration response:', result);
-
-            if (result.success) {
-                const data = result.data;
-                const txHash = data.tx_hash;
-
-                // Store tx_hash in state for persistence
-                state.registrationTx = txHash;
-
-                const explorerUrl = state.chainConfig
-                    ? UIUtils.getExplorerUrl(txHash, state.chainConfig.block_explorer_urls[0])
-                    : null;
-
-                // Show optimistic state with transaction link
-                content.innerHTML = `
-                    <p class="text-yellow-400 mb-2">⏳ Transaction Pending</p>
-                    <p class="text-sm text-gray-400 mb-1">TX: ${UIUtils.formatTxHash(txHash)}</p>
-                    ${explorerUrl ? `
-                        <a href="${explorerUrl}" target="_blank" rel="noopener noreferrer"
-                           class="text-blue-400 hover:text-blue-300 text-sm inline-block mb-2">
-                            → View on Explorer ↗
-                        </a>
-                    ` : ''}
-                    <p class="text-sm text-gray-500" id="poll-status">Waiting for confirmation...</p>
-                `;
-                UIUtils.showToast('Transaction broadcast successfully!', 'info');
-
-                // Start polling with exponential backoff
-                const txStatus = await pollTransactionStatus(txHash, {
-                    onUpdate: (status) => {
-                        const pollStatus = document.getElementById('poll-status');
-                        if (pollStatus) {
-                            if (status.status === 'pending') {
-                                pollStatus.textContent = `Checking... (attempt ${status.attempts})`;
-                            }
-                        }
-                    }
-                });
-
-                if (txStatus && txStatus.success && txStatus.agent_id) {
-                    // Successfully confirmed!
-                    UIUtils.showToast('Agent registered successfully!', 'success');
-                    content.innerHTML = `
-                        <p class="text-green-400 mb-2">✓ Registration Confirmed</p>
-                        <p class="text-sm text-gray-400 mb-1">Agent ID: ${txStatus.agent_id}</p>
-                        <p class="text-sm text-gray-400 mb-1">TX: ${UIUtils.formatTxHash(txHash)}</p>
-                        ${explorerUrl ? `
-                            <a href="${explorerUrl}" target="_blank" rel="noopener noreferrer"
-                               class="text-blue-400 hover:text-blue-300 text-sm">
-                                → View on Explorer ↗
-                            </a>
-                        ` : ''}
-                    `;
-                    // Update registration status
-                    setTimeout(checkRegistration, 1000);
-                } else if (txStatus && txStatus.status === 'failed') {
-                    UIUtils.showError('step2-content', 'Transaction failed. Please try again.', register);
-                    UIUtils.showToast('Transaction failed!', 'error');
-                } else {
-                    // Timeout
-                    content.innerHTML = `
-                        <p class="text-yellow-400 mb-2">⏳ Transaction Still Pending</p>
-                        <p class="text-sm text-gray-400 mb-1">TX: ${UIUtils.formatTxHash(txHash)}</p>
-                        ${explorerUrl ? `
-                            <a href="${explorerUrl}" target="_blank" rel="noopener noreferrer"
-                               class="text-blue-400 hover:text-blue-300 text-sm inline-block mb-2">
-                                → View on Explorer ↗
-                            </a>
-                        ` : ''}
-                        <button onclick="checkRegistration()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm">
-                            Check Status
-                        </button>
-                    `;
-                }
-            } else {
-                UIUtils.showError('step2-content', result.error, register);
-                UIUtils.showToast('Registration failed: ' + result.error, 'error');
-            }
         }
 
         loadWallet();
