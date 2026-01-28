@@ -61,6 +61,17 @@ agent: Optional[ServerAgent] = None
 tee_auth: Optional[TEEAuthenticator] = None
 tee_verifier: Optional[TEEVerifier] = None
 
+# TEE Preparation State
+tee_preparation = {
+    "state": "idle",      # idle | preparing | ready | error
+    "started_at": None,
+    "proof_data": None,   # Cached: {tee_arch, code_measurement, code_config_uri, proof}
+    "error": None,
+    "expires_at": None    # Cache expiry time
+}
+
+TEE_CACHE_DURATION = 300  # 5 minutes
+
 
 @app.on_event("startup")
 async def startup_event():
