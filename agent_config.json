@@ -1,11 +1,11 @@
 {
-  "name": "TEE Agent",
-  "description": "Trustless AI agent with Intel TDX attestation and key generation via dstack",
-  "image": "",
-  "supportedTrust": [
-    "tee-attestation"
-  ],
-  "endpoints": {
+  "type": "agent-registration-v1",
+  "metadata": {
+    "name": "TEE Agent",
+    "description": "Trustless AI agent with Intel TDX attestation and key generation via dstack",
+    "image": ""
+  },
+  "services": {
     "a2a": {
       "enabled": true,
       "version": "0.3.0"
@@ -16,11 +16,6 @@
       "capabilities": {},
       "version": "2025-06-18"
     },
-    "oasf": {
-      "enabled": false,
-      "endpoint": "",
-      "version": "0.7"
-    },
     "ens": {
       "enabled": false,
       "endpoint": "",
@@ -30,15 +25,28 @@
       "enabled": false,
       "endpoint": "",
       "version": "v1"
-    }
+    },
+    "agentWallet": {}
+  },
+  "capabilities": {
+    "oasf": "0.8.0",
+    "domains": ["infrastructure"],
+    "skills": ["tee-attestation", "secure-computation"]
+  },
+  "trust": {
+    "supportedTrust": ["tee-attestation", "reputation"],
+    "teeAttestation": true,
+    "reputation": true
+  },
+  "registration": {
+    "agentId": null,
+    "agentRegistry": "eip155:11155111:0x8004A818BFB912233c491871b3d84c89A494BD9e"
+  },
+  "status": {
+    "active": true,
+    "x402": false
   },
   "evmChains": [
-    {"name": "Ethereum", "chainId": 1},
-    {"name": "Optimism", "chainId": 10},
-    {"name": "Base", "chainId": 8453},
-    {"name": "Base-Sepolia", "chainId": 84532},
-    {"name": "Arbitrum", "chainId": 42161},
-    {"name": "Polygon", "chainId": 137},
     {"name": "Ethereum-Sepolia", "chainId": 11155111}
   ]
 }

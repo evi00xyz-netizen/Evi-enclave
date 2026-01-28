@@ -30,6 +30,7 @@ from src.agent.base import AgentConfig, RegistryAddresses
 from src.templates.server_agent import ServerAgent
 from src.agent.tee_auth import TEEAuthenticator
 from src.agent.tee_verifier import TEEVerifier
+from src.agent.chain_config import get_chain_config_from_env, log_chain_config
 
 
 # Request/Response Models
@@ -98,44 +99,38 @@ async def startup_event():
     # Create agent configuration
     from src.agent.base import AgentRole
 
-    # Load chain configuration from environment
-    chain_id = int(os.getenv("CHAIN_ID", "84532"))
-    rpc_url = os.getenv("RPC_URL", "https://sepolia.base.org")
+    # Load chain configuration from environment (multi-chain ready)
+    chain_config = get_chain_config_from_env()
+    print("\n🔗 Chain Configuration:")
+    log_chain_config(chain_config)
 
     config = AgentConfig(
         domain=domain,
         salt=salt,
         role=AgentRole.SERVER,
-        chain_id=chain_id,
-        rpc_url=rpc_url,
+        chain_id=chain_config.chain_id,
+        rpc_url=chain_config.rpc_url,
         use_tee_auth=True,
         private_key=tee_auth.private_key
     )
 
-    # Registry addresses (new contracts from environment or defaults)
-    identity_addr = os.getenv("IDENTITY_REGISTRY_ADDRESS", "0x8506e13d47faa2DC8c5a0dD49182e74A6131a0e3")
-    reputation_addr = os.getenv("REPUTATION_REGISTRY_ADDRESS", "0xA13497975fd3f6cA74081B074471C753b622C903")
-    validation_addr = os.getenv("VALIDATION_REGISTRY_ADDRESS", "0x6e24aA15e134AF710C330B767018d739CAeCE293")
-    tee_verifier_addr = os.getenv("TEE_VERIFIER_ADDRESS", "0x481ce1a6EEC3016d1E61725B1527D73Df1c393a5")
-
+    # Registry addresses from chain config
     registries = RegistryAddresses(
-        identity=identity_addr,
-        reputation=reputation_addr,
-        validation=validation_addr,
-        tee_verifier=tee_verifier_addr
+        identity=chain_config.identity_registry,
+        reputation=chain_config.reputation_registry,
+        validation="0x0000000000000000000000000000000000000000",  # Not used
+        tee_verifier=chain_config.tee_verifier
     )
 
     # Initialize agent
     print("\n🤖 Initializing agent...")
     agent = ServerAgent(config, registries)
 
-    # Initialize TEE verifier
-    tee_registry_addr = os.getenv("TEE_REGISTRY_ADDRESS", "0x03eCA4d903Adc96440328C2E3a18B71EB0AFa60D")
+    # Initialize TEE verifier (uses chain_config for addresses)
     tee_verifier = TEEVerifier(
         w3=agent._registry_client.w3,
-        tee_registry_address=tee_registry_addr,
         account=tee_auth.account,
-        verifier_address=tee_verifier_addr
+        config=chain_config
     )
 
     # Generate agent card
@@ -684,17 +679,47 @@ async def agent_registration():
 
     from src.agent.agent_card import build_erc8004_registration
 
+    chain_config = get_chain_config_from_env()
     agent_address = await agent._get_agent_address()
-    identity_registry = os.getenv("IDENTITY_REGISTRY_ADDRESS", "0x8506e13d47faa2DC8c5a0dD49182e74A6131a0e3")
 
     return build_erc8004_registration(
         domain=agent.config.domain,
         agent_address=agent_address,
         agent_id=agent.agent_id if agent.is_registered else None,
-        identity_registry=identity_registry,
-        chain_id=agent.config.chain_id,
+        identity_registry=chain_config.identity_registry,
+        chain_id=chain_config.chain_id,
         config_path="agent_config.json"
     )
+
+
+@app.get("/.well-known/agent-registration.json")
+async def agent_registration_wellknown():
+    """ERC-8004 domain verification endpoint (best practice)."""
+    return await agent_registration()
+
+
+@app.get("/api/reputation")
+@app.get("/api/reputation/{agent_id}")
+async def get_reputation(agent_id: Optional[int] = None):
+    """Get agent reputation from subgraph."""
+    if not agent:
+        raise HTTPException(status_code=503, detail="Agent not initialized")
+
+    # Use provided agent_id or default to current agent
+    target_agent_id = agent_id if agent_id is not None else agent.agent_id
+
+    if target_agent_id is None:
+        raise HTTPException(status_code=400, detail="Agent not registered - no agent_id available")
+
+    try:
+        reputation = await agent._registry_client.get_reputation(target_agent_id)
+        return {
+            "agent_id": target_agent_id,
+            "reputation": reputation,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get reputation: {str(e)}")
 
 
 tasks = {}

@@ -1,18 +1,49 @@
 """TEE Verification and Registration"""
 
 import httpx
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from web3 import Web3
 from eth_account import Account
 from eth_account.messages import encode_defunct
 
+from .chain_config import ChainConfig, get_chain_config_from_env
+
 
 class TEEVerifier:
-    def __init__(self, w3: Web3, tee_registry_address: str, account: Account, verifier_address: str):
+    def __init__(
+        self,
+        w3: Web3,
+        tee_registry_address: Optional[str] = None,
+        account: Optional[Account] = None,
+        verifier_address: Optional[str] = None,
+        config: Optional[ChainConfig] = None
+    ):
+        """
+        Initialize TEE verifier.
+
+        Args:
+            w3: Web3 instance
+            tee_registry_address: TEE Registry contract address (optional if config provided)
+            account: Account for signing transactions
+            verifier_address: TEE Verifier contract address (optional if config provided)
+            config: Chain configuration (if None, loads from environment)
+        """
+        # Load chain config if addresses not provided
+        if config is None and (tee_registry_address is None or verifier_address is None):
+            config = get_chain_config_from_env()
+
+        # Use provided addresses or fall back to config
+        registry_addr = tee_registry_address or config.tee_registry
+        verifier_addr = verifier_address or config.tee_verifier
+
         self.w3 = w3
-        self.registry_address = Web3.to_checksum_address(tee_registry_address)
+        self.registry_address = Web3.to_checksum_address(registry_addr)
         self.account = account
-        self.verifier_address = Web3.to_checksum_address(verifier_address)
+        self.verifier_address = Web3.to_checksum_address(verifier_addr)
+
+        print(f"TEEVerifier initialized:")
+        print(f"  TEE Registry: {self.registry_address}")
+        print(f"  TEE Verifier: {self.verifier_address}")
 
         self.registry_abi = [
             {

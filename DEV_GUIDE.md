@@ -19,7 +19,7 @@ This guide walks you through developing, testing, and deploying ERC-8004 complia
 - **VibeVM** installed and running ([VibeVM Repository](https://github.com/Phala-Network/VibeVM))
 - **Git** for version control
 - **GitHub account** for hosting your agent repository
-- **Base Sepolia ETH** for on-chain registration (minimum 0.001 ETH)
+- **ETH Sepolia ETH** for on-chain registration (minimum 0.001 ETH)
 - Basic knowledge of Python, FastAPI, and Docker
 
 ---
@@ -86,8 +86,8 @@ nano .env
 ```bash
 AGENT_DOMAIN=localhost:8000
 AGENT_SALT=local-dev-salt-change-me-123  # Change this!
-RPC_URL=https://sepolia.base.org
-CHAIN_ID=84532
+RPC_URL=https://1rpc.io/sepolia
+CHAIN_ID=11155111
 ```
 
 ### 5. Install Dependencies
@@ -118,7 +118,7 @@ Open your browser and navigate to:
 **Test the complete flow:**
 
 1. View your TEE-derived wallet address
-2. Fund the wallet with Base Sepolia ETH (use a faucet)
+2. Fund the wallet with ETH Sepolia ETH (use a faucet)
 3. Register on-chain via `/api/register` endpoint
 4. Submit TEE attestation via `/api/tee/register`
 5. Verify agent is active at `/agent.json`
@@ -150,8 +150,8 @@ This file defines your agent's metadata and capabilities:
     }
   },
   "evmChains": [
-    {"name": "Base", "chainId": 8453},
-    {"name": "Base-Sepolia", "chainId": 84532}
+    {"name": "Ethereum", "chainId": 1},
+    {"name": "Ethereum-Sepolia", "chainId": 11155111}
   ]
 }
 ```
@@ -256,7 +256,7 @@ tail -f /var/log/agent.log  # Adjust path as needed
 |-------|----------|
 | Wallet generation fails | Ensure `AGENT_SALT` is set in `.env` |
 | TEE attestation fails | In VibeVM, this is expected (simulated). Works in production CVM |
-| Registration fails | Ensure wallet has sufficient Base Sepolia ETH (0.001 ETH) |
+| Registration fails | Ensure wallet has sufficient ETH Sepolia ETH (0.001 ETH) |
 | Port already in use | Change `AGENT_PORT` in `.env` or stop conflicting service |
 
 ---
@@ -338,7 +338,7 @@ Ensure production URLs and metadata are set:
 - Production-ready code committed to GitHub
 - Commit hash from your production commit
 - Phala account on [phala.com](https://phala.com)
-- Base Sepolia ETH for agent funding
+- ETH Sepolia ETH for agent funding
 
 ### Deployment Steps
 
@@ -376,8 +376,8 @@ On [phala.com](https://phala.com), configure your CVM with these secrets:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RPC_URL` | `https://sepolia.base.org` | Blockchain RPC endpoint |
-| `CHAIN_ID` | `84532` | Base Sepolia chain ID |
+| `RPC_URL` | `https://1rpc.io/sepolia` | Blockchain RPC endpoint |
+| `CHAIN_ID` | `11155111` | ETH Sepolia chain ID |
 | `UPDATE_CODE` | `true` | Pull latest code on restart |
 
 #### 4. Choose CVM Configuration
@@ -415,7 +415,7 @@ Phala will provide this URL in your CVM dashboard.
 
 1. Navigate to your agent URL
 2. View the wallet address (derived from `AGENT_SALT`)
-3. Fund with Base Sepolia ETH (minimum 0.001 ETH)
+3. Fund with ETH Sepolia ETH (minimum 0.001 ETH)
 4. Use the QR code or copy the address
 
 #### 8. Register On-Chain
@@ -545,7 +545,7 @@ Access CVM logs on Phala dashboard to debug issues:
 - **ERC-8004 Specification**: [EIP-8004](https://eips.ethereum.org/EIPS/eip-8004)
 - **VibeVM Documentation**: [GitHub](https://github.com/Phala-Network/VibeVM)
 - **Phala Network**: [phala.network](https://phala.network)
-- **Base Sepolia Faucet**: [base.org/faucet](https://base.org/faucet)
+- **ETH Sepolia Faucet**: [sepoliafaucet.com](https://sepoliafaucet.com)
 - **A2A Protocol**: Agent-to-Agent communication standard
 
 ---
