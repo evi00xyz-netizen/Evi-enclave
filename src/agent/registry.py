@@ -243,14 +243,15 @@ class RegistryClient:
         Returns:
             Dict with registration info or {"registered": False}
         """
-        # Try subgraph first (fast path)
+        # Try subgraph first (fast path - instant lookup)
         if self.subgraph and agent_address:
             agent_data = await self.subgraph.get_agent_by_owner(agent_address)
-            if agent_data:
-                print(f"✅ Found agent via subgraph: ID {agent_data['id']}")
+            if agent_data and agent_data.get('agentId'):
+                agent_id_from_subgraph = int(agent_data['agentId'])
+                print(f"✅ Found agent via subgraph: ID {agent_id_from_subgraph}")
                 return {
                     "registered": True,
-                    "agent_id": int(agent_data['id']),
+                    "agent_id": agent_id_from_subgraph,
                     "agent_address": agent_address
                 }
 

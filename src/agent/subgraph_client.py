@@ -143,8 +143,8 @@ class SubgraphClient:
             query GetAgentByOwner($owner: String!) {
                 agents(where: { owner: $owner }, first: 1) {
                     id
+                    agentId
                     owner
-                    tokenURI
                     createdAt
                     updatedAt
                 }
