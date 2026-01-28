@@ -701,7 +701,7 @@ async def get_tee_status():
 @app.post("/api/tee/register")
 async def register_tee():
     """Register TEE with proof."""
-    global agent, tee_auth, tee_verifier
+    global agent, tee_auth, tee_verifier, tee_preparation
 
     if not agent or not tee_auth or not tee_verifier:
         raise HTTPException(status_code=503, detail="Agent not initialized")
@@ -709,92 +709,165 @@ async def register_tee():
     if not agent.is_registered or not agent.agent_id:
         raise HTTPException(status_code=400, detail="Agent must be registered first")
 
-    attestation = await tee_auth.get_attestation()
+    # Check if we have cached proof ready
+    use_cached = False
+    if tee_preparation["state"] == "ready" and tee_preparation["proof_data"]:
+        if tee_preparation["expires_at"] and datetime.utcnow().timestamp() < tee_preparation["expires_at"]:
+            use_cached = True
+            print("🚀 TEE Register: Using cached proof (fast path)")
 
-    # Check if attestation failed
-    if "error" in attestation:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get TEE attestation: {attestation.get('error')}"
-        )
+    if use_cached:
+        # Fast path: use cached proof
+        proof_data = tee_preparation["proof_data"]
 
-    # Check if TEE is disabled
-    if attestation.get("mode") == "development":
-        raise HTTPException(
-            status_code=400,
-            detail="TEE is disabled. Cannot register without TEE attestation."
-        )
+        # Check if already registered
+        if await tee_verifier.check_tee_registered(agent.agent_id, proof_data["pubkey"]):
+            return {"success": True, "already_registered": True, "agent_id": agent.agent_id, "pubkey": proof_data["pubkey"]}
 
-    # Validate required fields
-    if "quote" not in attestation or "event_log" not in attestation:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Invalid attestation structure. Missing required fields. Got: {list(attestation.keys())}"
-        )
+        try:
+            # Submit transaction with cached proof
+            tx = tee_verifier.registry_contract.functions.addKey(
+                agent.agent_id,
+                proof_data["tee_arch"],
+                proof_data["code_measurement"],
+                proof_data["pubkey"],
+                proof_data["code_config_uri"],
+                tee_verifier.verifier_address,
+                proof_data["proof"]
+            ).build_transaction({
+                'chainId': tee_verifier.w3.eth.chain_id,
+                'gas': 500000,
+                'gasPrice': tee_verifier.w3.eth.gas_price,
+                'nonce': tee_verifier.w3.eth.get_transaction_count(tee_verifier.account.address)
+            })
 
-    agent_address = await agent._get_agent_address()
+            signed_tx = tee_verifier.account.sign_transaction(tx)
+            tx_hash = tee_verifier.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
 
-    agent_domain = os.getenv('AGENT_DOMAIN', '')
+            print(f"📤 TEE tx (cached): {tx_hash.hex()}")
 
-    # Strip protocol prefixes
-    for prefix in ['https://', 'http://', 'ipfs://', 'ipns://']:
-        if agent_domain.startswith(prefix):
-            agent_domain = agent_domain[len(prefix):]
+            receipt = tee_verifier.w3.eth.wait_for_transaction_receipt(tx_hash)
 
-    print(f"🔍 AGENT_DOMAIN: {agent_domain}")
+            if receipt.status != 1:
+                raise RuntimeError(f"TEE registration failed: tx={tx_hash.hex()}")
 
-    # Parse domain: format is {app_id}-{port}.{dstack_domain} or localhost:port for dev
-    if '-' in agent_domain and '.' in agent_domain:
-        # Production: app_id-port.dstack_domain
-        app_id = agent_domain.split('-')[0]
-        dstack_domain = agent_domain.split('.', 1)[1]
+            # Clear cache after successful registration
+            tee_preparation["state"] = "idle"
+            tee_preparation["proof_data"] = None
+
+            # Build explorer URL and return
+            chain_configs = {
+                84532: "https://sepolia.basescan.org",
+                8453: "https://basescan.org",
+                11155111: "https://sepolia.etherscan.io",
+                1: "https://etherscan.io"
+            }
+            chain_id = agent.config.chain_id
+            explorer_base = chain_configs.get(chain_id, "https://etherscan.io")
+
+            return {
+                "success": True,
+                "tx_hash": tx_hash.hex(),
+                "agent_id": agent.agent_id,
+                "pubkey": proof_data["pubkey"],
+                "explorer_url": f"{explorer_base}/tx/{tx_hash.hex()}",
+                "used_cache": True
+            }
+        except Exception as e:
+            import traceback
+            print(f"TEE registration error (cached): {str(e)}")
+            print(traceback.format_exc())
+            raise HTTPException(status_code=500, detail=f"TEE registration failed: {str(e)}")
+
     else:
-        # Local dev: localhost:port or just domain
-        app_id = agent_domain.split(':')[0].split('.')[0]
-        dstack_domain = os.getenv('DSTACK_GATEWAY_DOMAIN', 'local.dev')
+        # Slow path: full attestation flow
+        attestation = await tee_auth.get_attestation()
 
-    print(f"🔍 app_id: {app_id}")
-    print(f"🔍 dstack_domain: {dstack_domain}")
+        # Check if attestation failed
+        if "error" in attestation:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to get TEE attestation: {attestation.get('error')}"
+            )
 
-    tdx_quote = attestation['quote']
-    event_log = attestation['event_log']
+        # Check if TEE is disabled
+        if attestation.get("mode") == "development":
+            raise HTTPException(
+                status_code=400,
+                detail="TEE is disabled. Cannot register without TEE attestation."
+            )
 
-    try:
-        result = await tee_verifier.register_tee_key(
-            agent_id=agent.agent_id,
-            agent_address=agent_address,
-            tdx_quote=tdx_quote,
-            app_id=app_id,
-            dstack_domain=dstack_domain,
-            event_log=event_log,
-        )
+        # Validate required fields
+        if "quote" not in attestation or "event_log" not in attestation:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Invalid attestation structure. Missing required fields. Got: {list(attestation.keys())}"
+            )
 
-        if result.get("already_registered"):
-            return {"success": True, "already_registered": True, "agent_id": agent.agent_id, "pubkey": result["pubkey"]}
+        agent_address = await agent._get_agent_address()
 
-        # Get dynamic explorer URL based on chain config
-        chain_configs = {
-            84532: "https://sepolia.basescan.org",
-            8453: "https://basescan.org",
-            11155111: "https://sepolia.etherscan.io",
-            1: "https://etherscan.io"
-        }
-        chain_id = agent.config.chain_id
-        explorer_base = chain_configs.get(chain_id, "https://etherscan.io")
-        explorer_url = f"{explorer_base}/tx/{result['tx_hash']}"
+        agent_domain = os.getenv('AGENT_DOMAIN', '')
 
-        return {
-            "success": True,
-            "tx_hash": result["tx_hash"],
-            "agent_id": agent.agent_id,
-            "pubkey": result["pubkey"],
-            "explorer_url": explorer_url
-        }
-    except Exception as e:
-        import traceback
-        print(f"TEE registration error: {str(e)}")
-        print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"TEE registration failed: {str(e)}")
+        # Strip protocol prefixes
+        for prefix in ['https://', 'http://', 'ipfs://', 'ipns://']:
+            if agent_domain.startswith(prefix):
+                agent_domain = agent_domain[len(prefix):]
+
+        print(f"🔍 AGENT_DOMAIN: {agent_domain}")
+
+        # Parse domain: format is {app_id}-{port}.{dstack_domain} or localhost:port for dev
+        if '-' in agent_domain and '.' in agent_domain:
+            # Production: app_id-port.dstack_domain
+            app_id = agent_domain.split('-')[0]
+            dstack_domain = agent_domain.split('.', 1)[1]
+        else:
+            # Local dev: localhost:port or just domain
+            app_id = agent_domain.split(':')[0].split('.')[0]
+            dstack_domain = os.getenv('DSTACK_GATEWAY_DOMAIN', 'local.dev')
+
+        print(f"🔍 app_id: {app_id}")
+        print(f"🔍 dstack_domain: {dstack_domain}")
+
+        tdx_quote = attestation['quote']
+        event_log = attestation['event_log']
+
+        try:
+            result = await tee_verifier.register_tee_key(
+                agent_id=agent.agent_id,
+                agent_address=agent_address,
+                tdx_quote=tdx_quote,
+                app_id=app_id,
+                dstack_domain=dstack_domain,
+                event_log=event_log,
+            )
+
+            if result.get("already_registered"):
+                return {"success": True, "already_registered": True, "agent_id": agent.agent_id, "pubkey": result["pubkey"]}
+
+            # Get dynamic explorer URL based on chain config
+            chain_configs = {
+                84532: "https://sepolia.basescan.org",
+                8453: "https://basescan.org",
+                11155111: "https://sepolia.etherscan.io",
+                1: "https://etherscan.io"
+            }
+            chain_id = agent.config.chain_id
+            explorer_base = chain_configs.get(chain_id, "https://etherscan.io")
+            explorer_url = f"{explorer_base}/tx/{result['tx_hash']}"
+
+            return {
+                "success": True,
+                "tx_hash": result["tx_hash"],
+                "agent_id": agent.agent_id,
+                "pubkey": result["pubkey"],
+                "explorer_url": explorer_url,
+                "used_cache": False
+            }
+        except Exception as e:
+            import traceback
+            print(f"TEE registration error: {str(e)}")
+            print(traceback.format_exc())
+            raise HTTPException(status_code=500, detail=f"TEE registration failed: {str(e)}")
 
 
 @app.post("/api/metadata/update")
