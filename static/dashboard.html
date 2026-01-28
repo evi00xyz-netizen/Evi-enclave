@@ -172,8 +172,8 @@
                     ${txLinkHtml}
                 `;
                 state.registration = data.agent;
-                document.getElementById('step4').classList.remove('opacity-50');
-                checkTEE();
+                document.getElementById('step3').classList.remove('opacity-50');
+                checkReputation();
             } else {
                 content.innerHTML = `
                     <p class="text-sm text-gray-400 mb-2">Address: ${data.agent.address}</p>
@@ -182,6 +182,45 @@
                     </button>
                 `;
             }
+        }
+
+        async function checkReputation() {
+            const step3 = document.getElementById('step3');
+            const content = document.getElementById('step3-content');
+            const status = document.getElementById('step3-status');
+
+            const result = await apiClient.getReputation();
+
+            if (!result.success) {
+                UIUtils.showError('step3-content', result.error, checkReputation);
+                return;
+            }
+
+            const data = result.data;
+
+            // Mark step as complete
+            step3.className = 'bg-gray-800 rounded-lg p-6';
+            status.className = 'w-8 h-8 rounded-full bg-green-600 flex items-center justify-center';
+            status.innerHTML = '✓';
+
+            if (data.feedback_count > 0) {
+                // Has reputation data
+                content.innerHTML = `
+                    <p class="text-green-400 mb-2">✓ Reputation Active</p>
+                    <p class="text-sm text-gray-400">Average Score: ${data.average_score}/100</p>
+                    <p class="text-sm text-gray-400">Feedback Count: ${data.feedback_count}</p>
+                `;
+            } else {
+                // No feedback yet
+                content.innerHTML = `
+                    <p class="text-green-400 mb-2">✓ No feedback yet</p>
+                    <p class="text-sm text-gray-400">Your reputation will build as users interact with your agent.</p>
+                `;
+            }
+
+            // Enable step 4 and continue to TEE verification
+            document.getElementById('step4').classList.remove('opacity-50');
+            checkTEE();
         }
 
         async function checkTEE() {
