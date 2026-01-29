@@ -40,11 +40,6 @@ class SignRequest(BaseModel):
     message: str
 
 
-class TaskRequest(BaseModel):
-    task_id: str
-    query: str
-    data: Optional[Dict[str, Any]] = None
-    parameters: Optional[Dict[str, Any]] = None
 
 
 class ChatRequest(BaseModel):
@@ -500,29 +495,6 @@ async def sign_message(request: SignRequest):
         raise HTTPException(status_code=500, detail=f"Signing failed: {str(e)}")
 
 
-@app.post("/api/process")
-async def process_task(request: TaskRequest):
-    """
-    Process a task with the agent.
-
-    Demonstrates agent's analytical capabilities.
-    """
-    if not agent:
-        raise HTTPException(status_code=503, detail="Agent not initialized")
-
-    try:
-        task_data = {
-            "task_id": request.task_id,
-            "query": request.query,
-            "data": request.data or {},
-            "parameters": request.parameters or {}
-        }
-
-        result = await agent.process_task(task_data)
-        return result
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Task processing failed: {str(e)}")
 
 
 @app.get("/api/card")
@@ -832,49 +804,6 @@ async def submit_initial_reputation(request: Dict[str, Any] = None):
         raise HTTPException(status_code=500, detail=f"Failed to submit initial reputation: {str(e)}")
 
 
-tasks = {}
-
-@app.post("/tasks")
-async def create_task(request: Dict[str, Any]):
-    """A2A: Create task."""
-    if not agent:
-        raise HTTPException(status_code=503, detail="Agent not initialized")
-
-    task_id = request.get("taskId") or str(__import__('uuid').uuid4())
-    context_id = request.get("contextId") or task_id
-
-    tasks[task_id] = {
-        "taskId": task_id,
-        "contextId": context_id,
-        "status": "pending",
-        "artifacts": []
-    }
-
-    # Execute async
-    asyncio.create_task(execute_task(task_id, request))
-
-    return {"taskId": task_id, "status": "pending"}
-
-@app.get("/tasks/{task_id}")
-async def get_task(task_id: str):
-    """A2A: Get task status."""
-    if task_id not in tasks:
-        raise HTTPException(status_code=404, detail="Task not found")
-    return tasks[task_id]
-
-async def execute_task(task_id: str, request: Dict[str, Any]):
-    tasks[task_id]["status"] = "running"
-    try:
-        result = await agent.process_task(request)
-        tasks[task_id].update({
-            "status": "completed",
-            "artifacts": [{"type": "result", "data": result}]
-        })
-    except Exception as e:
-        tasks[task_id].update({
-            "status": "failed",
-            "error": str(e)
-        })
 
 
 # =============================================================================
