@@ -6,8 +6,9 @@ Provides core functionality for trustless agent interactions.
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
+import warnings
 
 from .tee_auth import TEEAuthenticator
 from .registry import RegistryClient
@@ -40,8 +41,6 @@ class RegistryAddresses:
     """ERC-8004 registry contract addresses."""
     identity: str
     reputation: str
-    validation: str
-    tee_verifier: str
 
 
 class BaseAgent(ABC):
@@ -96,12 +95,6 @@ class BaseAgent(ABC):
         print(f"📝 Registering agent with domain: {self.config.domain}")
 
         # Register on-chain
-        registry_dict = {
-            'identity': self.registries.identity,
-            'reputation': self.registries.reputation,
-            'validation': self.registries.validation
-        }
-
         self.agent_id = await self._registry_client.register_agent(
             domain=self.config.domain,
             agent_address=agent_address,
@@ -162,18 +155,25 @@ class BaseAgent(ABC):
         data_hash: str
     ) -> str:
         """
-        Request validation from validator agent.
+        DEPRECATED: ValidationRegistry is no longer part of ERC-8004 core.
+
+        This method is kept for backward compatibility but does nothing.
+        Use TEE attestation for validation instead.
 
         Args:
             validator_agent_id: ID of validator
             data_hash: Hash of data to validate
 
         Returns:
-            Transaction hash
+            Empty string (no-op)
         """
-        return await self._registry_client.request_validation(
-            validator_agent_id, data_hash
+        warnings.warn(
+            "request_validation is deprecated. ValidationRegistry is no longer "
+            "part of ERC-8004 core. Use TEE attestation for validation instead.",
+            DeprecationWarning,
+            stacklevel=2
         )
+        return ""
 
     async def submit_validation_response(
         self,
@@ -181,18 +181,25 @@ class BaseAgent(ABC):
         response: int
     ) -> str:
         """
-        Submit validation response.
+        DEPRECATED: ValidationRegistry is no longer part of ERC-8004 core.
+
+        This method is kept for backward compatibility but does nothing.
+        Use TEE attestation for validation instead.
 
         Args:
             data_hash: Hash of validated data
             response: Validation result (0=invalid, 1=valid, 2=uncertain)
 
         Returns:
-            Transaction hash
+            Empty string (no-op)
         """
-        return await self._registry_client.submit_validation_response(
-            data_hash, response
+        warnings.warn(
+            "submit_validation_response is deprecated. ValidationRegistry is no longer "
+            "part of ERC-8004 core. Use TEE attestation for validation instead.",
+            DeprecationWarning,
+            stacklevel=2
         )
+        return ""
 
     # Abstract Methods - Implement in derived classes
     @abstractmethod
@@ -266,8 +273,7 @@ class BaseAgent(ABC):
         """Initialize registry client."""
         registry_dict = {
             'identity': self.registries.identity,
-            'reputation': self.registries.reputation,
-            'validation': self.registries.validation
+            'reputation': self.registries.reputation
         }
 
         self._registry_client = RegistryClient(

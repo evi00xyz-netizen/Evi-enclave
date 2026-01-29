@@ -9,6 +9,7 @@ Demonstrates TEE-derived key signing without requiring on-chain registration.
 import sys
 import os
 import asyncio
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -29,7 +30,9 @@ import uvicorn
 from src.agent.base import AgentConfig, RegistryAddresses
 from src.templates.server_agent import ServerAgent
 from src.agent.tee_auth import TEEAuthenticator
-from src.agent.tee_verifier import TEEVerifier
+from src.agent.chain_config import get_chain_config_from_env, log_chain_config
+from src.agent.session_store import SessionStore
+from src.agent.chat_agent import ChatAgent, INITIAL_GREETING
 
 
 # Request/Response Models
@@ -37,11 +40,17 @@ class SignRequest(BaseModel):
     message: str
 
 
-class TaskRequest(BaseModel):
-    task_id: str
-    query: str
-    data: Optional[Dict[str, Any]] = None
-    parameters: Optional[Dict[str, Any]] = None
+
+
+class ChatRequest(BaseModel):
+    session_id: Optional[str] = None
+    message: str
+
+
+class QuickActionRequest(BaseModel):
+    session_id: Optional[str] = None
+    tool: str
+    arguments: Dict[str, Any] = {}
 
 
 # Initialize FastAPI
@@ -58,13 +67,120 @@ app.mount("/static", StaticFiles(directory=static_path), name="static")
 # Global agent instance
 agent: Optional[ServerAgent] = None
 tee_auth: Optional[TEEAuthenticator] = None
-tee_verifier: Optional[TEEVerifier] = None
+
+# Chat interface components
+session_store: Optional[SessionStore] = None
+
+# TEE Preparation State
+tee_preparation = {
+    "state": "idle",      # idle | preparing | ready | error
+    "started_at": None,
+    "proof_data": None,   # Cached: {tee_arch, code_measurement, code_config_uri, proof}
+    "error": None,
+    "expires_at": None    # Cache expiry time
+}
+
+TEE_CACHE_DURATION = 300  # 5 minutes
+
+
+async def prepare_tee_attestation():
+    """Background task to prepare TEE attestation and offchain proof."""
+    global tee_preparation
+
+    # Don't restart if already preparing or ready (and not expired)
+    if tee_preparation["state"] == "preparing":
+        return
+    if tee_preparation["state"] == "ready" and tee_preparation["expires_at"]:
+        if datetime.utcnow().timestamp() < tee_preparation["expires_at"]:
+            return
+
+    # Check prerequisites
+    if not agent or not tee_auth or not agent.is_registered or not agent.agent_id:
+        tee_preparation["state"] = "error"
+        tee_preparation["error"] = "Agent not registered"
+        return
+
+    tee_preparation["state"] = "preparing"
+    tee_preparation["started_at"] = datetime.utcnow().timestamp()
+    tee_preparation["error"] = None
+
+    try:
+        # Step 1: Get TEE attestation
+        attestation = await tee_auth.get_attestation()
+
+        if "error" in attestation:
+            raise Exception(f"Attestation failed: {attestation.get('error')}")
+
+        if attestation.get("mode") == "development":
+            raise Exception("TEE is disabled in development mode")
+
+        if "quote" not in attestation or "event_log" not in attestation:
+            raise Exception(f"Invalid attestation: missing fields")
+
+        # Step 2: Get agent info
+        agent_address = await agent._get_agent_address()
+        agent_domain = os.getenv('AGENT_DOMAIN', '')
+
+        # Strip protocol prefixes
+        for prefix in ['https://', 'http://', 'ipfs://', 'ipns://']:
+            if agent_domain.startswith(prefix):
+                agent_domain = agent_domain[len(prefix):]
+
+        # Parse domain
+        if '-' in agent_domain and '.' in agent_domain:
+            app_id = agent_domain.split('-')[0]
+            dstack_domain = agent_domain.split('.', 1)[1]
+        else:
+            app_id = agent_domain.split(':')[0].split('.')[0]
+            dstack_domain = os.getenv('DSTACK_GATEWAY_DOMAIN', 'local.dev')
+
+        # Step 3: Get offchain proof
+        import httpx
+        from web3 import Web3
+
+        payload = {
+            'agentId': agent.agent_id,
+            'agentPubkey': agent_address,
+            'tdxQuote': attestation['quote'],
+            'appId': app_id,
+            'dstackDomain': dstack_domain,
+        }
+
+        print(f"🔄 TEE Prep: Requesting offchain proof...")
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                'https://194622febfc33d67e4a98f365dbc2fe9d0d53933-3000.dstack-pha-prod9.phala.network/getOffchainProof',
+                json=payload
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        # Cache the proof data
+        tee_preparation["proof_data"] = {
+            "tee_arch": Web3.to_bytes(text="TDX_DSTACK").ljust(32, b'\x00'),
+            "code_measurement": data['codeMeasurement'],
+            "code_config_uri": data['codeConfigUri'],
+            "proof": data['proof'],
+            "pubkey": Web3.to_checksum_address(agent_address)
+        }
+        tee_preparation["state"] = "ready"
+        tee_preparation["expires_at"] = datetime.utcnow().timestamp() + TEE_CACHE_DURATION
+        tee_preparation["error"] = None
+
+        print(f"✅ TEE Prep: Proof cached, expires in {TEE_CACHE_DURATION}s")
+
+    except Exception as e:
+        print(f"❌ TEE Prep failed: {str(e)}")
+        tee_preparation["state"] = "error"
+        tee_preparation["error"] = str(e)
+        tee_preparation["proof_data"] = None
 
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize agent on startup."""
-    global agent, tee_auth, tee_verifier
+    global agent, tee_auth
 
     print("=" * 80)
     print("STARTING LOCAL AGENT SERVER")
@@ -98,49 +214,41 @@ async def startup_event():
     # Create agent configuration
     from src.agent.base import AgentRole
 
-    # Load chain configuration from environment
-    chain_id = int(os.getenv("CHAIN_ID", "84532"))
-    rpc_url = os.getenv("RPC_URL", "https://sepolia.base.org")
+    # Load chain configuration from environment (multi-chain ready)
+    chain_config = get_chain_config_from_env()
+    print("\n🔗 Chain Configuration:")
+    log_chain_config(chain_config)
 
     config = AgentConfig(
         domain=domain,
         salt=salt,
         role=AgentRole.SERVER,
-        chain_id=chain_id,
-        rpc_url=rpc_url,
+        chain_id=chain_config.chain_id,
+        rpc_url=chain_config.rpc_url,
         use_tee_auth=True,
         private_key=tee_auth.private_key
     )
 
-    # Registry addresses (new contracts from environment or defaults)
-    identity_addr = os.getenv("IDENTITY_REGISTRY_ADDRESS", "0x8506e13d47faa2DC8c5a0dD49182e74A6131a0e3")
-    reputation_addr = os.getenv("REPUTATION_REGISTRY_ADDRESS", "0xA13497975fd3f6cA74081B074471C753b622C903")
-    validation_addr = os.getenv("VALIDATION_REGISTRY_ADDRESS", "0x6e24aA15e134AF710C330B767018d739CAeCE293")
-    tee_verifier_addr = os.getenv("TEE_VERIFIER_ADDRESS", "0x481ce1a6EEC3016d1E61725B1527D73Df1c393a5")
-
+    # Registry addresses from chain config
     registries = RegistryAddresses(
-        identity=identity_addr,
-        reputation=reputation_addr,
-        validation=validation_addr,
-        tee_verifier=tee_verifier_addr
+        identity=chain_config.identity_registry,
+        reputation=chain_config.reputation_registry,
     )
 
     # Initialize agent
     print("\n🤖 Initializing agent...")
     agent = ServerAgent(config, registries)
 
-    # Initialize TEE verifier
-    tee_registry_addr = os.getenv("TEE_REGISTRY_ADDRESS", "0x03eCA4d903Adc96440328C2E3a18B71EB0AFa60D")
-    tee_verifier = TEEVerifier(
-        w3=agent._registry_client.w3,
-        tee_registry_address=tee_registry_addr,
-        account=tee_auth.account,
-        verifier_address=tee_verifier_addr
-    )
-
     # Generate agent card
     print("\n📋 Generating agent card...")
     agent_card = await agent._create_agent_card()
+
+    # Initialize chat components
+    global session_store
+    timeout_minutes = int(os.getenv("SESSION_TIMEOUT_MINUTES", "60"))
+    max_sessions = int(os.getenv("MAX_SESSIONS", "100"))
+    session_store = SessionStore(timeout_minutes=timeout_minutes, max_sessions=max_sessions)
+    print(f"\n💬 Chat session store initialized (timeout: {timeout_minutes}m, max: {max_sessions})")
 
     print("\n" + "=" * 80)
     print("✅ AGENT SERVER READY")
@@ -311,7 +419,6 @@ async def get_status():
 
     is_registered = False
     agent_id = None
-    tee_verified = False
 
     # Always check on-chain registration to prevent spam registrations
     # Use fast path if we already have agent_id in memory (1 RPC call vs 1000)
@@ -326,9 +433,6 @@ async def get_status():
         # Update in-memory state
         agent.agent_id = agent_id
         agent.is_registered = True
-
-        if tee_verifier:
-            tee_verified = await tee_verifier.check_tee_registered(agent_id, agent_address)
     else:
         # Clear in-memory state if not registered on-chain
         agent.agent_id = None
@@ -341,7 +445,6 @@ async def get_status():
             "address": agent_address,
             "agent_id": agent_id,
             "is_registered": is_registered,
-            "tee_verified": tee_verified,
             "chain_id": agent.config.chain_id
         },
         "tee": {
@@ -392,29 +495,6 @@ async def sign_message(request: SignRequest):
         raise HTTPException(status_code=500, detail=f"Signing failed: {str(e)}")
 
 
-@app.post("/api/process")
-async def process_task(request: TaskRequest):
-    """
-    Process a task with the agent.
-
-    Demonstrates agent's analytical capabilities.
-    """
-    if not agent:
-        raise HTTPException(status_code=503, detail="Agent not initialized")
-
-    try:
-        task_data = {
-            "task_id": request.task_id,
-            "query": request.query,
-            "data": request.data or {},
-            "parameters": request.parameters or {}
-        }
-
-        result = await agent.process_task(task_data)
-        return result
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Task processing failed: {str(e)}")
 
 
 @app.get("/api/card")
@@ -478,12 +558,15 @@ async def register_agent():
         agent_id = address_check["agent_id"]
         agent.agent_id = agent_id
         agent.is_registered = True
+        # Auto-start TEE preparation for already registered agents
+        asyncio.create_task(prepare_tee_attestation())
         return {
             "success": True,
             "agent_id": agent_id,
             "already_registered": True,
             "domain": agent.config.domain,
-            "address": agent_address
+            "address": agent_address,
+            "tee_prep_started": True
         }
 
     # Check balance
@@ -505,7 +588,8 @@ async def register_agent():
             "success": True,
             "tx_hash": result["tx_hash"],
             "agent_address": result["agent_address"],
-            "domain": agent.config.domain
+            "domain": agent.config.domain,
+            "message": "Call /api/tee/prepare after registration confirms"
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -530,103 +614,72 @@ async def get_transaction_status(tx_hash: str):
         raise HTTPException(status_code=500, detail=f"Failed to check transaction: {str(e)}")
 
 
-@app.post("/api/tee/register")
-async def register_tee():
-    """Register TEE with proof."""
-    global agent, tee_auth, tee_verifier
+@app.post("/api/tee/prepare")
+async def prepare_tee():
+    """Start background TEE attestation preparation."""
+    global tee_preparation
 
-    if not agent or not tee_auth or not tee_verifier:
+    if not agent or not tee_auth:
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
     if not agent.is_registered or not agent.agent_id:
         raise HTTPException(status_code=400, detail="Agent must be registered first")
 
-    attestation = await tee_auth.get_attestation()
+    # If already ready and not expired, return current state
+    if tee_preparation["state"] == "ready" and tee_preparation["expires_at"]:
+        if datetime.utcnow().timestamp() < tee_preparation["expires_at"]:
+            return {
+                "state": "ready",
+                "message": "TEE proof already cached",
+                "expires_in": int(tee_preparation["expires_at"] - datetime.utcnow().timestamp())
+            }
 
-    # Check if attestation failed
-    if "error" in attestation:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get TEE attestation: {attestation.get('error')}"
-        )
-
-    # Check if TEE is disabled
-    if attestation.get("mode") == "development":
-        raise HTTPException(
-            status_code=400,
-            detail="TEE is disabled. Cannot register without TEE attestation."
-        )
-
-    # Validate required fields
-    if "quote" not in attestation or "event_log" not in attestation:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Invalid attestation structure. Missing required fields. Got: {list(attestation.keys())}"
-        )
-
-    agent_address = await agent._get_agent_address()
-
-    agent_domain = os.getenv('AGENT_DOMAIN', '')
-
-    # Strip protocol prefixes
-    for prefix in ['https://', 'http://', 'ipfs://', 'ipns://']:
-        if agent_domain.startswith(prefix):
-            agent_domain = agent_domain[len(prefix):]
-
-    print(f"🔍 AGENT_DOMAIN: {agent_domain}")
-
-    # Parse domain: format is {app_id}-{port}.{dstack_domain} or localhost:port for dev
-    if '-' in agent_domain and '.' in agent_domain:
-        # Production: app_id-port.dstack_domain
-        app_id = agent_domain.split('-')[0]
-        dstack_domain = agent_domain.split('.', 1)[1]
-    else:
-        # Local dev: localhost:port or just domain
-        app_id = agent_domain.split(':')[0].split('.')[0]
-        dstack_domain = os.getenv('DSTACK_GATEWAY_DOMAIN', 'local.dev')
-
-    print(f"🔍 app_id: {app_id}")
-    print(f"🔍 dstack_domain: {dstack_domain}")
-
-    tdx_quote = attestation['quote']
-    event_log = attestation['event_log']
-
-    try:
-        result = await tee_verifier.register_tee_key(
-            agent_id=agent.agent_id,
-            agent_address=agent_address,
-            tdx_quote=tdx_quote,
-            app_id=app_id,
-            dstack_domain=dstack_domain,
-            event_log=event_log,
-        )
-
-        if result.get("already_registered"):
-            return {"success": True, "already_registered": True, "agent_id": agent.agent_id, "pubkey": result["pubkey"]}
-
-        # Get dynamic explorer URL based on chain config
-        chain_configs = {
-            84532: "https://sepolia.basescan.org",
-            8453: "https://basescan.org",
-            11155111: "https://sepolia.etherscan.io",
-            1: "https://etherscan.io"
-        }
-        chain_id = agent.config.chain_id
-        explorer_base = chain_configs.get(chain_id, "https://etherscan.io")
-        explorer_url = f"{explorer_base}/tx/{result['tx_hash']}"
-
+    # If already preparing, return current state
+    if tee_preparation["state"] == "preparing":
+        elapsed = int(datetime.utcnow().timestamp() - tee_preparation["started_at"])
         return {
-            "success": True,
-            "tx_hash": result["tx_hash"],
-            "agent_id": agent.agent_id,
-            "pubkey": result["pubkey"],
-            "explorer_url": explorer_url
+            "state": "preparing",
+            "message": "TEE preparation in progress",
+            "elapsed_seconds": elapsed
         }
-    except Exception as e:
-        import traceback
-        print(f"TEE registration error: {str(e)}")
-        print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"TEE registration failed: {str(e)}")
+
+    # Start background preparation
+    asyncio.create_task(prepare_tee_attestation())
+
+    return {
+        "state": "preparing",
+        "message": "TEE preparation started"
+    }
+
+
+@app.get("/api/tee/status")
+async def get_tee_status():
+    """Get TEE preparation status."""
+    global tee_preparation
+
+    if not agent:
+        raise HTTPException(status_code=503, detail="Agent not initialized")
+
+    response = {
+        "state": tee_preparation["state"],
+        "error": tee_preparation["error"]
+    }
+
+    if tee_preparation["state"] == "preparing" and tee_preparation["started_at"]:
+        response["elapsed_seconds"] = int(datetime.utcnow().timestamp() - tee_preparation["started_at"])
+
+    if tee_preparation["state"] == "ready" and tee_preparation["expires_at"]:
+        remaining = int(tee_preparation["expires_at"] - datetime.utcnow().timestamp())
+        if remaining > 0:
+            response["expires_in"] = remaining
+            response["cached_until"] = datetime.utcfromtimestamp(tee_preparation["expires_at"]).isoformat() + "Z"
+        else:
+            # Expired, reset to idle
+            tee_preparation["state"] = "idle"
+            tee_preparation["proof_data"] = None
+            response["state"] = "idle"
+
+    return response
 
 
 @app.post("/api/metadata/update")
@@ -684,63 +737,410 @@ async def agent_registration():
 
     from src.agent.agent_card import build_erc8004_registration
 
+    chain_config = get_chain_config_from_env()
     agent_address = await agent._get_agent_address()
-    identity_registry = os.getenv("IDENTITY_REGISTRY_ADDRESS", "0x8506e13d47faa2DC8c5a0dD49182e74A6131a0e3")
 
     return build_erc8004_registration(
         domain=agent.config.domain,
         agent_address=agent_address,
         agent_id=agent.agent_id if agent.is_registered else None,
-        identity_registry=identity_registry,
-        chain_id=agent.config.chain_id,
+        identity_registry=chain_config.identity_registry,
+        chain_id=chain_config.chain_id,
         config_path="agent_config.json"
     )
 
 
-tasks = {}
+@app.get("/.well-known/agent-registration.json")
+async def agent_registration_wellknown():
+    """ERC-8004 domain verification endpoint (best practice)."""
+    return await agent_registration()
 
-@app.post("/tasks")
-async def create_task(request: Dict[str, Any]):
-    """A2A: Create task."""
+
+@app.get("/api/reputation")
+@app.get("/api/reputation/{agent_id}")
+async def get_reputation(agent_id: Optional[int] = None):
+    """Get agent reputation from contract/subgraph."""
     if not agent:
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
-    task_id = request.get("taskId") or str(__import__('uuid').uuid4())
-    context_id = request.get("contextId") or task_id
+    # Use provided agent_id or default to current agent
+    target_agent_id = agent_id if agent_id is not None else agent.agent_id
 
-    tasks[task_id] = {
-        "taskId": task_id,
-        "contextId": context_id,
-        "status": "pending",
-        "artifacts": []
+    if target_agent_id is None:
+        raise HTTPException(status_code=400, detail="Agent not registered - no agent_id available")
+
+    try:
+        reputation = await agent._registry_client.get_reputation(target_agent_id)
+        return {
+            "agent_id": target_agent_id,
+            "reputation": reputation,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get reputation: {str(e)}")
+
+
+@app.post("/api/reputation/submit-initial")
+async def submit_initial_reputation(request: Dict[str, Any] = None):
+    """Submit initial reputation entry for agent."""
+    if not agent:
+        raise HTTPException(status_code=503, detail="Agent not initialized")
+
+    if not agent.is_registered or not agent.agent_id:
+        raise HTTPException(status_code=400, detail="Agent must be registered first")
+
+    try:
+        result = await agent._registry_client.submit_initial_reputation(
+            agent_id=agent.agent_id,
+            wait_for_receipt=True
+        )
+        return {
+            "success": True,
+            "tx_hash": result.get("tx_hash"),
+            "agent_id": result.get("agent_id"),
+            "confirmed": result.get("confirmed", False)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to submit initial reputation: {str(e)}")
+
+
+
+
+# =============================================================================
+# CHAT INTERFACE ENDPOINTS
+# =============================================================================
+
+@app.post("/api/chat")
+async def chat_endpoint(request: ChatRequest):
+    """Send a message to the chat agent."""
+    global session_store, agent, tee_auth
+
+    if not agent:
+        raise HTTPException(status_code=503, detail="Agent not initialized")
+
+    if not session_store:
+        raise HTTPException(status_code=503, detail="Session store not initialized")
+
+    # Get or create session
+    session = session_store.get_or_create(request.session_id)
+
+    # Build agent context
+    agent_address = await agent._get_agent_address()
+    chain_configs = {
+        84532: "Base Sepolia",
+        8453: "Base Mainnet",
+        11155111: "Ethereum Sepolia",
+        1: "Ethereum Mainnet"
     }
 
-    # Execute async
-    asyncio.create_task(execute_task(task_id, request))
+    agent_context = {
+        "agent_id": agent.agent_id or "Not registered",
+        "wallet_address": agent_address,
+        "chain_name": chain_configs.get(agent.config.chain_id, f"Chain {agent.config.chain_id}"),
+        "chain_id": agent.config.chain_id
+    }
 
-    return {"taskId": task_id, "status": "pending"}
+    # Build tool handlers
+    tool_handlers = {
+        "get_wallet_info": _handle_get_wallet_info,
+        "sign_message": _handle_sign_message,
+        "verify_signature": _handle_verify_signature,
+        "generate_attestation": _handle_generate_attestation,
+        "get_agent_card": _handle_get_agent_card,
+        "get_registration_status": _handle_get_registration_status,
+        "get_chain_config": _handle_get_chain_config,
+        "get_reputation": _handle_get_reputation,
+        "submit_feedback": _handle_submit_feedback,
+    }
 
-@app.get("/tasks/{task_id}")
-async def get_task(task_id: str):
-    """A2A: Get task status."""
-    if task_id not in tasks:
-        raise HTTPException(status_code=404, detail="Task not found")
-    return tasks[task_id]
+    # Create chat agent for this request
+    chat_agent = ChatAgent(agent_context, tool_handlers)
 
-async def execute_task(task_id: str, request: Dict[str, Any]):
-    tasks[task_id]["status"] = "running"
     try:
-        result = await agent.process_task(request)
-        tasks[task_id].update({
-            "status": "completed",
-            "artifacts": [{"type": "result", "data": result}]
-        })
-    except Exception as e:
-        tasks[task_id].update({
-            "status": "failed",
-            "error": str(e)
-        })
+        response_text, tool_calls = await chat_agent.chat(session, request.message)
 
+        return {
+            "session_id": session.id,
+            "response": response_text,
+            "tool_calls": tool_calls if tool_calls else None
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")
+
+
+@app.post("/api/quick-action")
+async def quick_action_endpoint(request: QuickActionRequest):
+    """Execute a tool directly without LLM."""
+    global session_store, agent
+
+    if not agent:
+        raise HTTPException(status_code=503, detail="Agent not initialized")
+
+    if not session_store:
+        raise HTTPException(status_code=503, detail="Session store not initialized")
+
+    # Get or create session
+    session = session_store.get_or_create(request.session_id)
+
+    # Map tool names to handlers
+    tool_map = {
+        "get_wallet_info": _handle_get_wallet_info,
+        "get_agent_card": _handle_get_agent_card,
+        "generate_attestation": _handle_generate_attestation,
+        "get_registration_status": _handle_get_registration_status,
+        "get_reputation": _handle_get_reputation,
+    }
+
+    handler = tool_map.get(request.tool)
+    if not handler:
+        raise HTTPException(status_code=400, detail=f"Unknown tool: {request.tool}")
+
+    try:
+        result = await handler(request.arguments)
+
+        # Format as chat message
+        formatted = f"**{request.tool}**\n```json\n{json.dumps(result, indent=2)}\n```"
+
+        # Add to session history
+        session.add_message("user", f"[Quick Action: {request.tool}]")
+        session.add_message("assistant", formatted, [{"tool": request.tool, "result": result}])
+
+        return {
+            "session_id": session.id,
+            "response": formatted,
+            "tool_calls": [{"tool": request.tool, "result": result}]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Tool error: {str(e)}")
+
+
+@app.post("/api/session/new")
+async def new_session():
+    """Create a new chat session."""
+    global session_store
+
+    if not session_store:
+        raise HTTPException(status_code=503, detail="Session store not initialized")
+
+    session_id = session_store.create()
+    return {
+        "session_id": session_id,
+        "greeting": INITIAL_GREETING
+    }
+
+
+@app.get("/api/session/{session_id}/history")
+async def get_session_history(session_id: str):
+    """Get message history for a session."""
+    global session_store
+
+    if not session_store:
+        raise HTTPException(status_code=503, detail="Session store not initialized")
+
+    session = session_store.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return {
+        "session_id": session_id,
+        "messages": [
+            {
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat(),
+                "tool_calls": msg.tool_calls
+            }
+            for msg in session.messages
+        ]
+    }
+
+
+@app.delete("/api/session/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a session."""
+    global session_store
+
+    if not session_store:
+        raise HTTPException(status_code=503, detail="Session store not initialized")
+
+    deleted = session_store.delete(session_id)
+    return {"deleted": deleted}
+
+
+# =============================================================================
+# CHAT TOOL HANDLERS
+# =============================================================================
+
+async def _handle_get_wallet_info(args: dict) -> dict:
+    """Handle get_wallet_info tool."""
+    agent_address = await agent._get_agent_address()
+    balance_wei = agent._registry_client.w3.eth.get_balance(agent_address)
+    balance_eth = agent._registry_client.w3.from_wei(balance_wei, 'ether')
+
+    chain_configs = {
+        84532: "Base Sepolia",
+        8453: "Base Mainnet",
+        11155111: "Ethereum Sepolia",
+        1: "Ethereum Mainnet"
+    }
+
+    return {
+        "address": agent_address,
+        "balance": str(balance_eth),
+        "balance_wei": str(balance_wei),
+        "chain": chain_configs.get(agent.config.chain_id, f"Chain {agent.config.chain_id}"),
+        "chain_id": agent.config.chain_id
+    }
+
+
+async def _handle_sign_message(args: dict) -> dict:
+    """Handle sign_message tool."""
+    message = args.get("message", "")
+    signable_message = encode_defunct(text=message)
+    signed = tee_auth.account.sign_message(signable_message)
+
+    return {
+        "message": message,
+        "signature": signed.signature.hex(),
+        "signer": await agent._get_agent_address()
+    }
+
+
+async def _handle_verify_signature(args: dict) -> dict:
+    """Handle verify_signature tool."""
+    from eth_account import Account
+
+    message = args.get("message", "")
+    signature = args.get("signature", "")
+    expected_address = args.get("address", "")
+
+    try:
+        signable_message = encode_defunct(text=message)
+        recovered = Account.recover_message(signable_message, signature=signature)
+        is_valid = recovered.lower() == expected_address.lower()
+        return {
+            "valid": is_valid,
+            "recovered_address": recovered,
+            "expected_address": expected_address
+        }
+    except Exception as e:
+        return {"valid": False, "error": str(e)}
+
+
+async def _handle_generate_attestation(args: dict) -> dict:
+    """Handle generate_attestation tool - returns full TEE attestation."""
+    attestation = await tee_auth.get_attestation()
+
+    if "error" in attestation:
+        return {"error": attestation["error"]}
+
+    # Check if in development mode (no real TEE)
+    if attestation.get("mode") == "development":
+        return {
+            "mode": "development",
+            "warning": "Running outside TEE - no real attestation available",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    # Return actual attestation data
+    quote = attestation.get("quote", "")
+    event_log = attestation.get("event_log", "")
+
+    # Parse TDX quote header for readable info (first 48 bytes contain header)
+    quote_info = {}
+    if quote and len(quote) >= 96:  # At least 48 bytes in hex
+        try:
+            quote_bytes = bytes.fromhex(quote[:96])
+            quote_info = {
+                "version": int.from_bytes(quote_bytes[0:2], 'little'),
+                "attestation_key_type": int.from_bytes(quote_bytes[2:4], 'little'),
+                "tee_type": hex(int.from_bytes(quote_bytes[4:8], 'little')),
+            }
+        except Exception:
+            pass
+
+    return {
+        "quote": quote,
+        "quote_hex_length": len(quote),
+        "quote_info": quote_info,
+        "event_log": event_log,
+        "event_log_length": len(event_log),
+        "timestamp": datetime.utcnow().isoformat(),
+        "user_data": args.get("user_data", ""),
+        "verification": {
+            "type": "Intel TDX",
+            "provider": "dstack",
+            "verify_url": f"https://{os.getenv('AGENT_DOMAIN', '')}/api/tee/verify"
+        }
+    }
+
+
+async def _handle_get_agent_card(args: dict) -> dict:
+    """Handle get_agent_card tool."""
+    return await agent._create_agent_card()
+
+
+async def _handle_get_registration_status(args: dict) -> dict:
+    """Handle get_registration_status tool."""
+    return {
+        "identity": {
+            "registered": agent.is_registered,
+            "agent_id": agent.agent_id
+        }
+    }
+
+
+async def _handle_get_chain_config(args: dict) -> dict:
+    """Handle get_chain_config tool."""
+    chain_config = get_chain_config_from_env()
+
+    return {
+        "chain_id": chain_config.chain_id,
+        "rpc_url": chain_config.rpc_url,
+        "contracts": {
+            "identity_registry": chain_config.identity_registry,
+            "reputation_registry": chain_config.reputation_registry
+        }
+    }
+
+
+async def _handle_get_reputation(args: dict) -> dict:
+    """Handle get_reputation tool."""
+    target_id = args.get("agent_id") or agent.agent_id
+
+    if not target_id:
+        return {"error": "No agent ID specified and agent not registered"}
+
+    try:
+        reputation = await agent._registry_client.get_reputation(target_id)
+        return {
+            "agent_id": target_id,
+            "reputation": reputation
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _handle_submit_feedback(args: dict) -> dict:
+    """Handle submit_feedback tool."""
+    try:
+        result = await agent._registry_client.give_feedback(
+            agent_id=args["target_agent_id"],
+            value=args["value"],
+            tag=args["tag"],
+            comment=args.get("comment", "")
+        )
+        return {
+            "success": True,
+            "tx_hash": result.get("tx_hash")
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# =============================================================================
+# HEALTH CHECK
+# =============================================================================
 
 @app.get("/health")
 async def health_check():

@@ -107,7 +107,7 @@ class AgentCardBuilder:
 
         Args:
             agent_id: On-chain agent ID
-            agent_address: CAIP-10 format address (e.g., "eip155:84532:0x...")
+            agent_address: CAIP-10 format address (e.g., "eip155:11155111:0x...")
             signature: Registration signature
             chain_id: Optional chain ID for multi-chain
 
@@ -260,7 +260,7 @@ def create_tee_agent_card(
     agent_id: Optional[int] = None,
     signature: Optional[str] = None,
     capabilities: Optional[List[tuple[str, str]]] = None,
-    chain_id: int = 84532,
+    chain_id: int = 11155111,
     identity_registry: Optional[str] = None,
     ai_model: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -275,7 +275,7 @@ def create_tee_agent_card(
         agent_id: On-chain agent ID (if registered)
         signature: Registration signature (if registered)
         capabilities: List of (name, description) tuples
-        chain_id: Blockchain chain ID (default: Base Sepolia)
+        chain_id: Blockchain chain ID (default: ETH Sepolia)
         identity_registry: Identity registry contract address (for CAIP-2 registrations)
         ai_model: AI model identifier (e.g., "claude-sonnet-4-5-20250929")
 
@@ -291,20 +291,18 @@ def create_tee_agent_card(
         for cap_name, cap_desc in capabilities:
             builder.add_capability(cap_name, cap_desc)
 
-    # Set transport
+    # Set transport - chat API endpoint
     builder.set_transport(
         "http",
-        f"https://{domain}/api",
-        authentication={"type": "signature", "scheme": "EIP-712"}
+        f"https://{domain}",
+        authentication={"type": "none", "note": "Chat interface is publicly accessible"}
     )
 
     # Set trust models for TEE agent
-    builder.set_trust_models(["tee-attestation", "feedback", "inference-validation"])
+    builder.set_trust_models(["tee-attestation", "feedback"])
 
     # Set AI model from parameter or environment variable
     model = ai_model or os.getenv('AI_MODEL')
-    if not model:
-        print("⚠️  AI_MODEL not provided and environment variable not set")
     builder.card["aiModel"] = model
 
     # Set infrastructure
@@ -314,12 +312,18 @@ def create_tee_agent_card(
         attestation_provider="dstack",
         additional_info={
             "teeType": "Intel TDX",
-            "attested": True
+            "runtime": "dstack TEE VM"
         }
     )
 
     # Build the card
     card = builder.build()
+
+    # Add agent wallet address
+    card["wallet"] = {
+        "address": agent_address,
+        "chain": f"eip155:{chain_id}"
+    }
 
     # Add registrations if agent is registered
     if agent_id is not None and identity_registry:
@@ -343,7 +347,7 @@ def create_ai_agent_card(
     signature: Optional[str] = None,
     capabilities: Optional[List[tuple[str, str]]] = None,
     tee_enabled: bool = True,
-    chain_id: int = 84532
+    chain_id: int = 11155111
 ) -> Dict[str, Any]:
     """
     Create an AI-powered agent card.
@@ -420,13 +424,25 @@ def build_erc8004_registration(
     agent_address: str,
     agent_id: Optional[int],
     identity_registry: str,
-    chain_id: int = 84532,
-    config_path: str = "agent_config.json"
+    chain_id: int = 11155111,
+    config_path: str = "agent_config.json",
+    reputation_data: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Build ERC-8004 registration JSON from config file.
 
+    Supports both old format (endpoints) and new format (services).
+
     Spec: https://eips.ethereum.org/EIPS/eip-8004#registration-v1
+
+    Args:
+        domain: Agent domain
+        agent_address: Agent's Ethereum address
+        agent_id: On-chain agent ID (if registered)
+        identity_registry: Identity registry contract address
+        chain_id: Chain ID (default: ETH Sepolia)
+        config_path: Path to agent_config.json
+        reputation_data: Optional reputation data to include
     """
     import json
     import os
@@ -437,73 +453,159 @@ def build_erc8004_registration(
     with open(config_path) as f:
         cfg = json.load(f)
 
+    # Check if using new format (has 'services' key) or old format (has 'endpoints' key)
+    is_new_format = "services" in cfg
+
     endpoints = []
 
-    # A2A
-    if cfg["endpoints"]["a2a"]["enabled"]:
-        endpoints.append({
-            "name": "A2A",
-            "endpoint": f"https://{domain}/.well-known/agent-card.json",
-            "version": cfg["endpoints"]["a2a"]["version"]
-        })
+    if is_new_format:
+        # New ERC-8004 format with services
+        services = cfg.get("services", {})
 
-    # MCP
-    if cfg["endpoints"]["mcp"]["enabled"]:
-        ep = {
-            "name": "MCP",
-            "endpoint": cfg["endpoints"]["mcp"]["endpoint"],
-            "version": cfg["endpoints"]["mcp"]["version"]
-        }
-        if cfg["endpoints"]["mcp"]["capabilities"]:
-            ep["capabilities"] = cfg["endpoints"]["mcp"]["capabilities"]
-        endpoints.append(ep)
+        # A2A
+        if services.get("a2a", {}).get("enabled"):
+            endpoints.append({
+                "name": "A2A",
+                "endpoint": f"https://{domain}/.well-known/agent-card.json",
+                "version": services["a2a"].get("version", "0.3.0")
+            })
 
-    # OASF
-    if cfg["endpoints"]["oasf"]["enabled"]:
-        endpoints.append({
-            "name": "OASF",
-            "endpoint": cfg["endpoints"]["oasf"]["endpoint"],
-            "version": cfg["endpoints"]["oasf"]["version"]
-        })
+        # MCP
+        if services.get("mcp", {}).get("enabled"):
+            ep = {
+                "name": "MCP",
+                "endpoint": services["mcp"].get("endpoint", ""),
+                "version": services["mcp"].get("version", "2025-06-18")
+            }
+            if services["mcp"].get("capabilities"):
+                ep["capabilities"] = services["mcp"]["capabilities"]
+            endpoints.append(ep)
 
-    # ENS
-    if cfg["endpoints"]["ens"]["enabled"]:
-        endpoints.append({
-            "name": "ENS",
-            "endpoint": cfg["endpoints"]["ens"]["endpoint"],
-            "version": cfg["endpoints"]["ens"]["version"]
-        })
+        # ENS
+        if services.get("ens", {}).get("enabled"):
+            endpoints.append({
+                "name": "ENS",
+                "endpoint": services["ens"].get("endpoint", ""),
+                "version": services["ens"].get("version", "v1")
+            })
 
-    # DID
-    if cfg["endpoints"]["did"]["enabled"]:
-        endpoints.append({
-            "name": "DID",
-            "endpoint": cfg["endpoints"]["did"]["endpoint"],
-            "version": cfg["endpoints"]["did"]["version"]
-        })
+        # DID
+        if services.get("did", {}).get("enabled"):
+            endpoints.append({
+                "name": "DID",
+                "endpoint": services["did"].get("endpoint", ""),
+                "version": services["did"].get("version", "v1")
+            })
 
-    # EVM wallets
-    for chain in cfg["evmChains"]:
+        # Agent wallets from services.agentWallet
+        agent_wallet = services.get("agentWallet", {})
+        if agent_wallet:
+            for chain_key, address in agent_wallet.items():
+                if address:
+                    endpoints.append({
+                        "name": f"agentWallet",
+                        "endpoint": f"{chain_key}:{address}"
+                    })
+
+        # Get metadata from new format
+        metadata = cfg.get("metadata", {})
+        name = metadata.get("name", cfg.get("name", "TEE Agent"))
+        description = metadata.get("description", cfg.get("description", ""))
+        image = metadata.get("image", "")
+
+        # Get trust from new format
+        trust = cfg.get("trust", {})
+        supported_trust = trust.get("supportedTrust", ["tee-attestation", "reputation"])
+
+    else:
+        # Old format with endpoints
+        # A2A
+        if cfg["endpoints"]["a2a"]["enabled"]:
+            endpoints.append({
+                "name": "A2A",
+                "endpoint": f"https://{domain}/.well-known/agent-card.json",
+                "version": cfg["endpoints"]["a2a"]["version"]
+            })
+
+        # MCP
+        if cfg["endpoints"]["mcp"]["enabled"]:
+            ep = {
+                "name": "MCP",
+                "endpoint": cfg["endpoints"]["mcp"]["endpoint"],
+                "version": cfg["endpoints"]["mcp"]["version"]
+            }
+            if cfg["endpoints"]["mcp"]["capabilities"]:
+                ep["capabilities"] = cfg["endpoints"]["mcp"]["capabilities"]
+            endpoints.append(ep)
+
+        # OASF
+        if cfg["endpoints"].get("oasf", {}).get("enabled"):
+            endpoints.append({
+                "name": "OASF",
+                "endpoint": cfg["endpoints"]["oasf"]["endpoint"],
+                "version": cfg["endpoints"]["oasf"]["version"]
+            })
+
+        # ENS
+        if cfg["endpoints"]["ens"]["enabled"]:
+            endpoints.append({
+                "name": "ENS",
+                "endpoint": cfg["endpoints"]["ens"]["endpoint"],
+                "version": cfg["endpoints"]["ens"]["version"]
+            })
+
+        # DID
+        if cfg["endpoints"]["did"]["enabled"]:
+            endpoints.append({
+                "name": "DID",
+                "endpoint": cfg["endpoints"]["did"]["endpoint"],
+                "version": cfg["endpoints"]["did"]["version"]
+            })
+
+        name = cfg["name"]
+        description = cfg["description"]
+        image = cfg.get("image", "")
+        supported_trust = cfg.get("supportedTrust", ["tee-attestation"])
+
+    # EVM wallets from evmChains (both formats)
+    for chain in cfg.get("evmChains", []):
         endpoints.append({
             "name": f"agentWallet-{chain['name']}",
             "endpoint": f"eip155:{chain['chainId']}:{agent_address}"
         })
 
+    # Build the card
     card = {
         "type": "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
-        "name": cfg["name"],
-        "description": cfg["description"],
+        "name": name,
+        "description": description,
         "endpoints": endpoints,
-        "supportedTrust": cfg["supportedTrust"]
+        "supportedTrust": supported_trust
     }
 
-    if cfg.get("image"):
-        card["image"] = cfg["image"]
+    if image:
+        card["image"] = image
 
+    # Add capabilities if present (new format)
+    if is_new_format and cfg.get("capabilities"):
+        card["capabilities"] = cfg["capabilities"]
+
+    # Add status if present (new format)
+    if is_new_format and cfg.get("status"):
+        card["status"] = cfg["status"]
+
+    # Add registration info
     if agent_id is not None:
         card["registrations"] = [{
             "agentId": agent_id,
             "agentRegistry": f"eip155:{chain_id}:{identity_registry}"
         }]
+
+    # Add reputation data if provided
+    if reputation_data:
+        card["reputation"] = {
+            "feedbackCount": reputation_data.get("feedbackCount", 0),
+            "averageScore": reputation_data.get("averageScore", 0)
+        }
 
     return card

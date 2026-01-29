@@ -102,4 +102,5 @@ deployment/reports/
 **/*GITHUB**
 
 # dstack api spec
-dstack-api-spec.json
+dstack-api-spec.json.playwright-mcp/
+.playwright-mcp/

@@ -69,15 +69,16 @@ Complete guide for deploying your ERC-8004 TEE Agent to Phala Network CVM.
   ```
 
 - [ ] **Verify contract addresses** in `.env.example`
-  - Base Sepolia (testnet):
-    - `IDENTITY_REGISTRY_ADDRESS`: 0xd08eC0f6F00751993169103d2240A6E3aF6920f4
-    - `TEE_REGISTRY_ADDRESS`: 0x03eCA4d903Adc96440328C2E3a18B71EB0AFa60D
-    - `TEE_VERIFIER_ADDRESS`: 0x481ce1a6EEC3016d1E61725B1527D73Df1c393a5
+  - ETH Sepolia (testnet):
+    - `IDENTITY_REGISTRY_ADDRESS`: 0x8004A818BFB912233c491871b3d84c89A494BD9e
+    - `REPUTATION_REGISTRY_ADDRESS`: 0x8004B663056A597Dffe9eCcC1965A193B7388713
+    - `TEE_REGISTRY_ADDRESS`: 0x034675a9541445087Cd73B2120d6c8AF7F2056E3
+    - `TEE_VERIFIER_ADDRESS`: 0x27F8C122618b05420c2f67A9464415586C30D18B
 
 ### 4. Funding Preparation
 
-- [ ] **Acquire Base Sepolia ETH**
-  - Use [Base Sepolia Faucet](https://base.org/faucet)
+- [ ] **Acquire ETH Sepolia ETH**
+  - Use [Sepolia Faucet](https://sepoliafaucet.com) or [Alchemy Faucet](https://sepoliafaucet.com)
   - Minimum: 0.001 ETH (recommended: 0.01 ETH for multiple operations)
 
 - [ ] **Have wallet ready** to send ETH to agent's derived address
@@ -128,12 +129,13 @@ Configure these in Phala's secret management:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RPC_URL` | `https://sepolia.base.org` | Blockchain RPC endpoint |
-| `CHAIN_ID` | `84532` | Base Sepolia chain ID |
+| `RPC_URL` | `https://1rpc.io/sepolia` | Blockchain RPC endpoint |
+| `CHAIN_ID` | `11155111` | ETH Sepolia chain ID |
 | `UPDATE_CODE` | `true` | Pull latest code on restart |
-| `IDENTITY_REGISTRY_ADDRESS` | `0xd08eC...920f4` | Identity registry contract |
-| `TEE_REGISTRY_ADDRESS` | `0x03eCA...Fa60D` | TEE registry contract |
-| `TEE_VERIFIER_ADDRESS` | `0x481ce...393a5` | TEE verifier contract |
+| `IDENTITY_REGISTRY_ADDRESS` | `0x8004A...BD9e` | Identity registry contract |
+| `REPUTATION_REGISTRY_ADDRESS` | `0x8004B...8713` | Reputation registry contract |
+| `TEE_REGISTRY_ADDRESS` | `0x03467...56E3` | TEE registry contract |
+| `TEE_VERIFIER_ADDRESS` | `0x27F8C...D18B` | TEE verifier contract |
 
 - [ ] All required secrets are set
 - [ ] Optional variables configured if needed
@@ -183,11 +185,11 @@ Configure these in Phala's secret management:
 
 ### Step 2: Fund Agent Wallet
 
-- [ ] Send Base Sepolia ETH to the agent's wallet address
+- [ ] Send ETH Sepolia ETH to the agent's wallet address
   - Minimum: 0.001 ETH
   - Recommended: 0.01 ETH
 
-- [ ] Verify transaction confirmed on Base Sepolia
+- [ ] Verify transaction confirmed on [Sepolia Explorer](https://sepolia.etherscan.io)
 
 - [ ] Check balance:
   ```bash
@@ -278,7 +280,7 @@ Run complete validation:
 |-------|----------------|----------|
 | Agent URL not accessible | Port misconfiguration | Ensure `AGENT_PORT=80` in production |
 | Wallet generation fails | `AGENT_SALT` not set | Set secret on Phala |
-| Registration fails | Insufficient funds | Fund wallet with more Base Sepolia ETH |
+| Registration fails | Insufficient funds | Fund wallet with more ETH Sepolia ETH |
 | TEE attestation fails | CVM not properly configured | Verify CVM has Intel TDX enabled |
 | RPC errors | Wrong RPC URL or chain ID | Verify `RPC_URL` and `CHAIN_ID` match |
 | Contract call fails | Wrong contract addresses | Verify addresses for target network |
@@ -310,7 +312,7 @@ If you encounter issues:
 
 - [ ] Plan for code updates (set `UPDATE_CODE=true` and update `GIT_COMMIT_HASH`)
 - [ ] Monitor blockchain for registry contract updates
-- [ ] Keep Base Sepolia ETH balance funded
+- [ ] Keep ETH Sepolia ETH balance funded
 - [ ] Document any custom maintenance procedures
 
 ### Documentation
