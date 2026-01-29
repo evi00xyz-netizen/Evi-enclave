@@ -1099,17 +1099,50 @@ async def _handle_verify_signature(args: dict) -> dict:
 
 
 async def _handle_generate_attestation(args: dict) -> dict:
-    """Handle generate_attestation tool."""
+    """Handle generate_attestation tool - returns full TEE attestation."""
     attestation = await tee_auth.get_attestation()
 
     if "error" in attestation:
         return {"error": attestation["error"]}
 
+    # Check if in development mode (no real TEE)
+    if attestation.get("mode") == "development":
+        return {
+            "mode": "development",
+            "warning": "Running outside TEE - no real attestation available",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    # Return actual attestation data
+    quote = attestation.get("quote", "")
+    event_log = attestation.get("event_log", "")
+
+    # Parse TDX quote header for readable info (first 48 bytes contain header)
+    quote_info = {}
+    if quote and len(quote) >= 96:  # At least 48 bytes in hex
+        try:
+            quote_bytes = bytes.fromhex(quote[:96])
+            quote_info = {
+                "version": int.from_bytes(quote_bytes[0:2], 'little'),
+                "attestation_key_type": int.from_bytes(quote_bytes[2:4], 'little'),
+                "tee_type": hex(int.from_bytes(quote_bytes[4:8], 'little')),
+            }
+        except Exception:
+            pass
+
     return {
-        "quote_size": len(attestation.get("quote", "")),
-        "has_event_log": "event_log" in attestation,
+        "quote": quote,
+        "quote_hex_length": len(quote),
+        "quote_info": quote_info,
+        "event_log": event_log,
+        "event_log_length": len(event_log),
         "timestamp": datetime.utcnow().isoformat(),
-        "user_data": args.get("user_data", "")
+        "user_data": args.get("user_data", ""),
+        "verification": {
+            "type": "Intel TDX",
+            "provider": "dstack",
+            "verify_url": f"https://{os.getenv('AGENT_DOMAIN', '')}/api/tee/verify"
+        }
     }
 
 
