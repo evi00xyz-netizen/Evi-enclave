@@ -570,3 +570,335 @@
         padding: var(--space-xl) var(--space-xl);
     }
 }
+
+/* ===========================================
+   Code Blocks with Syntax Highlighting
+   =========================================== */
+
+.code-block-wrapper {
+    margin: var(--space-md) 0;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border-default);
+    background: var(--bg-primary);
+}
+
+.code-block-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-sm) var(--space-md);
+    background: rgba(255, 255, 255, 0.03);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.code-language {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.copy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
+    background: transparent;
+    border: 1px solid var(--border-default);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.copy-btn:hover {
+    background: var(--accent-muted);
+    border-color: var(--accent-primary);
+    color: var(--text-primary);
+}
+
+.copy-btn svg {
+    flex-shrink: 0;
+}
+
+.code-block-wrapper pre {
+    margin: 0;
+    padding: var(--space-md);
+    overflow-x: auto;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+}
+
+.code-block-wrapper pre code {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    background: transparent;
+    padding: 0;
+    color: var(--text-secondary);
+}
+
+/* Inline code styling */
+.inline-code {
+    font-family: var(--font-mono);
+    background: rgba(99, 102, 241, 0.12);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.875em;
+    color: var(--accent-hover);
+}
+
+/* ===========================================
+   Enhanced Tool Result Styling
+   =========================================== */
+
+.tool-result {
+    margin-top: var(--space-md);
+    background: var(--bg-primary);
+    border-radius: 10px;
+    border: 1px solid var(--border-default);
+    overflow: hidden;
+    transition: border-color var(--transition-fast);
+}
+
+.tool-result:hover {
+    border-color: var(--accent-primary);
+}
+
+.tool-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-sm) var(--space-md);
+    background: rgba(99, 102, 241, 0.08);
+    cursor: pointer;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    transition: background var(--transition-fast);
+    user-select: none;
+}
+
+.tool-header:hover {
+    background: rgba(99, 102, 241, 0.12);
+}
+
+.tool-header span:first-child {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.tool-header-right {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.tool-copy-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.tool-copy-btn:hover {
+    background: var(--accent-muted);
+    border-color: var(--accent-primary);
+    color: var(--text-primary);
+}
+
+.tool-header .toggle {
+    font-size: 0.75rem;
+    transition: transform var(--transition-fast);
+    color: var(--text-muted);
+}
+
+.tool-result.collapsed .tool-header .toggle {
+    transform: rotate(-90deg);
+}
+
+.tool-output-wrapper {
+    max-height: 500px;
+    overflow: auto;
+}
+
+.tool-result.collapsed .tool-output-wrapper {
+    display: none;
+}
+
+.tool-output {
+    padding: var(--space-md);
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    background: var(--bg-primary);
+    overflow-x: auto;
+    white-space: pre;
+    word-break: normal;
+}
+
+.tool-output code {
+    font-family: inherit;
+    background: transparent;
+    padding: 0;
+    color: inherit;
+}
+
+/* ===========================================
+   Highlight.js Theme Overrides (GitHub Dark)
+   =========================================== */
+
+.hljs {
+    background: transparent !important;
+    color: var(--text-secondary);
+}
+
+/* JSON syntax colors */
+.hljs-attr {
+    color: #79c0ff;
+}
+
+.hljs-string {
+    color: #a5d6ff;
+}
+
+.hljs-number {
+    color: #f2cc60;
+}
+
+.hljs-literal {
+    color: #ff7b72;
+}
+
+/* Python/JS syntax colors */
+.hljs-keyword {
+    color: #ff7b72;
+}
+
+.hljs-function {
+    color: #d2a8ff;
+}
+
+.hljs-title {
+    color: #d2a8ff;
+}
+
+.hljs-params {
+    color: var(--text-secondary);
+}
+
+.hljs-built_in {
+    color: #ffa657;
+}
+
+.hljs-comment {
+    color: #8b949e;
+    font-style: italic;
+}
+
+.hljs-variable {
+    color: #ffa657;
+}
+
+.hljs-operator {
+    color: #ff7b72;
+}
+
+/* Bash syntax colors */
+.hljs-meta {
+    color: #ffa657;
+}
+
+.hljs-selector-class {
+    color: #7ee787;
+}
+
+/* ===========================================
+   Message Content Enhancements
+   =========================================== */
+
+.message .content p {
+    margin: var(--space-sm) 0;
+}
+
+.message .content p:first-child {
+    margin-top: 0;
+}
+
+.message .content p:last-child {
+    margin-bottom: 0;
+}
+
+.message .content blockquote {
+    border-left: 3px solid var(--accent-primary);
+    margin: var(--space-md) 0;
+    padding-left: var(--space-md);
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+.message .content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: var(--space-md) 0;
+    font-size: 0.875rem;
+}
+
+.message .content th,
+.message .content td {
+    border: 1px solid var(--border-default);
+    padding: var(--space-sm) var(--space-md);
+    text-align: left;
+}
+
+.message .content th {
+    background: var(--bg-tertiary);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.message .content td {
+    background: var(--bg-secondary);
+}
+
+.message .content hr {
+    border: none;
+    border-top: 1px solid var(--border-default);
+    margin: var(--space-lg) 0;
+}
+
+/* Link styling in messages */
+.message .content a {
+    color: var(--accent-primary);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: border-color var(--transition-fast);
+}
+
+.message .content a:hover {
+    border-bottom-color: var(--accent-primary);
+}
+
+/* Image styling in messages */
+.message .content img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+    margin: var(--space-md) 0;
+}

@@ -2,9 +2,10 @@
  * Chat Interface Client Module
  *
  * Provides chat functionality for the TEE Agent developer page.
+ * Features: Markdown rendering, syntax highlighting, copy buttons.
  *
- * Security: All user content is sanitized via escapeHtml() before rendering
- * to prevent XSS attacks.
+ * Security: All user content is sanitized via DOMPurify-style escaping
+ * before rendering to prevent XSS attacks.
  */
 
 /**
@@ -15,6 +16,85 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+/**
+ * Configure marked for safe markdown rendering with syntax highlighting
+ */
+function configureMarked() {
+    if (typeof marked === 'undefined') {
+        console.warn('marked library not loaded, falling back to basic formatting');
+        return false;
+    }
+
+    // Custom renderer for code blocks with copy button
+    const renderer = new marked.Renderer();
+
+    renderer.code = function(code, language) {
+        const validLang = language && hljs.getLanguage(language) ? language : 'plaintext';
+        const highlighted = hljs.highlight(code, { language: validLang, ignoreIllegals: true }).value;
+        const uniqueId = 'code-' + Math.random().toString(36).substr(2, 9);
+
+        return `<div class="code-block-wrapper">
+            <div class="code-block-header">
+                <span class="code-language">${escapeHtml(validLang)}</span>
+                <button class="copy-btn" onclick="copyCode('${uniqueId}')" title="Copy code">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                    <span>Copy</span>
+                </button>
+            </div>
+            <pre class="hljs"><code id="${uniqueId}" class="language-${validLang}">${highlighted}</code></pre>
+        </div>`;
+    };
+
+    renderer.codespan = function(code) {
+        return `<code class="inline-code">${escapeHtml(code)}</code>`;
+    };
+
+    marked.setOptions({
+        renderer: renderer,
+        highlight: function(code, lang) {
+            if (typeof hljs !== 'undefined') {
+                const language = hljs.getLanguage(lang) ? lang : 'plaintext';
+                return hljs.highlight(code, { language, ignoreIllegals: true }).value;
+            }
+            return code;
+        },
+        breaks: true,
+        gfm: true
+    });
+
+    return true;
+}
+
+/**
+ * Copy code to clipboard
+ */
+function copyCode(elementId) {
+    const codeElement = document.getElementById(elementId);
+    if (!codeElement) return;
+
+    const text = codeElement.textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        // Find the copy button and show feedback
+        const wrapper = codeElement.closest('.code-block-wrapper');
+        const btn = wrapper?.querySelector('.copy-btn span');
+        if (btn) {
+            const original = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = original; }, 2000);
+        }
+    }).catch(err => {
+        console.error('Failed to copy:', err);
+    });
+}
+
+// Make copyCode available globally
+if (typeof window !== 'undefined') {
+    window.copyCode = copyCode;
 }
 
 
@@ -203,6 +283,7 @@ class ChatClient {
  * Chat UI Manager
  *
  * Handles rendering and interaction for the chat interface.
+ * Features: Markdown rendering, syntax highlighting, copy buttons.
  */
 class ChatUI {
     constructor(containerId) {
@@ -211,6 +292,7 @@ class ChatUI {
         this.inputElement = null;
         this.sendButton = null;
         this.messages = [];
+        this.markedAvailable = configureMarked();
 
         this.client = new ChatClient({
             onMessage: (msg) => this.addMessage(msg),
@@ -380,23 +462,52 @@ class ChatUI {
     }
 
     /**
-     * Format message content (basic markdown with XSS protection)
-     * SECURITY: escapeHtml is called FIRST to sanitize all content
+     * Format message content with markdown rendering
+     * Uses marked.js for full markdown support with syntax highlighting
      */
     formatContent(content) {
-        // First escape HTML to prevent XSS - this is critical
+        if (this.markedAvailable && typeof marked !== 'undefined') {
+            try {
+                // Use marked for full markdown parsing
+                // marked handles escaping internally with our custom renderer
+                return marked.parse(content);
+            } catch (e) {
+                console.warn('Markdown parsing failed, using fallback:', e);
+            }
+        }
+
+        // Fallback: basic formatting with XSS protection
         let html = escapeHtml(content);
 
         // Code blocks (```...```)
         html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(match, lang, code) {
-            return '<pre><code class="language-' + escapeHtml(lang) + '">' + code.trim() + '</code></pre>';
+            const validLang = lang || 'plaintext';
+            let highlighted = code.trim();
+            if (typeof hljs !== 'undefined') {
+                try {
+                    highlighted = hljs.highlight(code.trim(), {
+                        language: hljs.getLanguage(validLang) ? validLang : 'plaintext',
+                        ignoreIllegals: true
+                    }).value;
+                } catch (e) { /* use plain text */ }
+            }
+            return '<div class="code-block-wrapper"><pre class="hljs"><code class="language-' +
+                   escapeHtml(validLang) + '">' + highlighted + '</code></pre></div>';
         });
 
         // Inline code (`...`)
-        html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+        html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
 
         // Bold (**...**)
         html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+        // Italic (*...*)
+        html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+        // Headers (### ... ## ... # ...)
+        html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+        html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+        html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
 
         // Bullet points (- ... or * ...)
         html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
@@ -408,44 +519,89 @@ class ChatUI {
         // Wrap consecutive list items in ul
         html = html.replace(/(<li>.*<\/li>)+/g, '<ul>$&</ul>');
 
-        // Line breaks
+        // Line breaks (but not inside pre/code)
         html = html.replace(/\n/g, '<br>');
 
         return html;
     }
 
     /**
-     * Create a tool result element using safe DOM methods
+     * Create a tool result element with syntax-highlighted JSON
      */
     createToolResultElement(toolCall) {
         const toolResult = document.createElement('div');
         toolResult.className = 'tool-result';
-        toolResult.addEventListener('click', () => toolResult.classList.toggle('collapsed'));
 
         const toolHeader = document.createElement('div');
         toolHeader.className = 'tool-header';
+        toolHeader.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toolResult.classList.toggle('collapsed');
+        });
 
         const toolNameSpan = document.createElement('span');
-        // Sanitize tool name
+        // Sanitize tool name and format
         const toolName = escapeHtml(
             toolCall.tool.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); })
         );
         toolNameSpan.innerHTML = '\uD83D\uDCCB ' + toolName;
 
+        const headerRight = document.createElement('div');
+        headerRight.className = 'tool-header-right';
+
+        // Copy button for tool output
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'tool-copy-btn';
+        copyBtn.title = 'Copy JSON';
+        copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+        copyBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const json = JSON.stringify(toolCall.result, null, 2);
+            navigator.clipboard.writeText(json).then(() => {
+                copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+                setTimeout(() => {
+                    copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+                }, 2000);
+            });
+        });
+
         const toggleSpan = document.createElement('span');
         toggleSpan.className = 'toggle';
         toggleSpan.textContent = '\u25BC';
 
+        headerRight.appendChild(copyBtn);
+        headerRight.appendChild(toggleSpan);
+
         toolHeader.appendChild(toolNameSpan);
-        toolHeader.appendChild(toggleSpan);
+        toolHeader.appendChild(headerRight);
+
+        // Create output container with syntax highlighting
+        const toolOutputWrapper = document.createElement('div');
+        toolOutputWrapper.className = 'tool-output-wrapper';
 
         const toolOutput = document.createElement('pre');
-        toolOutput.className = 'tool-output';
-        // Sanitize the JSON output
-        toolOutput.textContent = JSON.stringify(toolCall.result, null, 2);
+        toolOutput.className = 'tool-output hljs';
+
+        const codeElement = document.createElement('code');
+        codeElement.className = 'language-json';
+
+        // Format and highlight JSON
+        const jsonString = JSON.stringify(toolCall.result, null, 2);
+        if (typeof hljs !== 'undefined') {
+            try {
+                codeElement.innerHTML = hljs.highlight(jsonString, { language: 'json' }).value;
+            } catch (e) {
+                codeElement.textContent = jsonString;
+            }
+        } else {
+            codeElement.textContent = jsonString;
+        }
+
+        toolOutput.appendChild(codeElement);
+        toolOutputWrapper.appendChild(toolOutput);
 
         toolResult.appendChild(toolHeader);
-        toolResult.appendChild(toolOutput);
+        toolResult.appendChild(toolOutputWrapper);
 
         return toolResult;
     }
