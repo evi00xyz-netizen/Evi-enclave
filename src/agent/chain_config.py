@@ -49,11 +49,13 @@ def get_subgraph_url(api_key: str = None) -> str:
 
 
 # Chain configurations - add new chains here
+# NOTE: subgraph_url is set to empty string and computed dynamically at runtime
+# to ensure SUBGRAPH_API_KEY env var is available
 CHAIN_CONFIGS: Dict[str, ChainConfig] = {
     "eth-sepolia": ChainConfig(
         chain_id=11155111,
         rpc_url="https://1rpc.io/sepolia",
-        subgraph_url=get_subgraph_url(),  # Will use SUBGRAPH_API_KEY env var
+        subgraph_url="",  # Computed dynamically in get_chain_config_from_env()
         identity_registry="0x8004A818BFB912233c491871b3d84c89A494BD9e",
         reputation_registry="0x8004B663056A597Dffe9eCcC1965A193B7388713",
     ),
@@ -61,7 +63,7 @@ CHAIN_CONFIGS: Dict[str, ChainConfig] = {
     # "base-mainnet": ChainConfig(
     #     chain_id=8453,
     #     rpc_url="https://mainnet.base.org",
-    #     subgraph_url="https://...",
+    #     subgraph_url="",  # Computed dynamically
     #     identity_registry="0x...",
     #     reputation_registry="0x...",
     # ),
@@ -102,6 +104,7 @@ def get_chain_config_from_env() -> ChainConfig:
     - CHAIN_NAME: Select which chain config to use
     - RPC_URL: Override RPC endpoint
     - SUBGRAPH_URL: Override subgraph endpoint
+    - SUBGRAPH_API_KEY: API key for The Graph Gateway
     - IDENTITY_REGISTRY_ADDRESS: Override identity registry address
     - REPUTATION_REGISTRY_ADDRESS: Override reputation registry address
 
@@ -111,11 +114,15 @@ def get_chain_config_from_env() -> ChainConfig:
     chain_name = os.getenv("CHAIN_NAME", DEFAULT_CHAIN)
     base_config = get_chain_config(chain_name)
 
+    # Compute subgraph URL dynamically at runtime (not at import time)
+    # This ensures SUBGRAPH_API_KEY env var is available after dotenv loads
+    subgraph_url = os.getenv("SUBGRAPH_URL") or get_subgraph_url()
+
     # Apply environment overrides
     return ChainConfig(
         chain_id=int(os.getenv("CHAIN_ID", str(base_config.chain_id))),
         rpc_url=os.getenv("RPC_URL", base_config.rpc_url),
-        subgraph_url=os.getenv("SUBGRAPH_URL", base_config.subgraph_url),
+        subgraph_url=subgraph_url,
         identity_registry=os.getenv("IDENTITY_REGISTRY_ADDRESS", base_config.identity_registry),
         reputation_registry=os.getenv("REPUTATION_REGISTRY_ADDRESS", base_config.reputation_registry),
     )
