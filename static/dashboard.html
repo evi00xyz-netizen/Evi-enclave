@@ -256,7 +256,7 @@
 
                 // Update reputation to in_progress
                 reg.reputation.status = 'in_progress';
-                reg.reputation.message = 'Submitting initial entry...';
+                reg.reputation.message = 'Initializing...';
                 renderUnifiedRegistration();
 
                 // Step 2: Submit reputation
@@ -264,9 +264,7 @@
 
                 if (reputationResult.success) {
                     reg.reputation.status = 'success';
-                    reg.reputation.message = 'Confirmed';
-                    reg.reputation.txHash = reputationResult.txHash;
-                    state.reputationTx = reputationResult.txHash;
+                    reg.reputation.message = 'Starts at 0 (builds from client feedback)';
                     markAgentReady();
                 } else {
                     reg.reputation.status = 'error';
@@ -359,7 +357,7 @@
                 // Trigger reputation flow if not already done
                 if (state.unifiedRegistration.reputation.status === 'waiting') {
                     state.unifiedRegistration.reputation.status = 'in_progress';
-                    state.unifiedRegistration.reputation.message = 'Submitting initial entry...';
+                    state.unifiedRegistration.reputation.message = 'Initializing...';
                     registerReputationFlow().then(handleReputationResult);
                 }
             } else {
@@ -382,9 +380,7 @@
             const reg = state.unifiedRegistration;
             if (result.success) {
                 reg.reputation.status = 'success';
-                reg.reputation.message = 'Confirmed';
-                reg.reputation.txHash = result.txHash;
-                state.reputationTx = result.txHash;
+                reg.reputation.message = 'Starts at 0 (builds from client feedback)';
 
                 // Check if all done
                 if (reg.identity.status === 'success') {

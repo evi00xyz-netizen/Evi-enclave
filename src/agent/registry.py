@@ -518,52 +518,25 @@ class RegistryClient:
 
     async def submit_initial_reputation(self, agent_id: int, wait_for_receipt: bool = True) -> Dict[str, Any]:
         """
-        Submit initial reputation entry for an agent.
+        Initialize reputation status for an agent.
 
-        Calls giveFeedback with neutral value to establish on-chain presence.
+        Note: Agents start with 0 reputation. Reputation is built over time
+        through feedback from clients who interact with the agent.
 
         Args:
-            agent_id: Agent ID to submit feedback for
-            wait_for_receipt: If True, wait for transaction confirmation
+            agent_id: Agent ID
+            wait_for_receipt: Ignored (kept for API compatibility)
 
         Returns:
-            Dict with tx_hash and confirmation status
+            Dict indicating reputation initialized at 0
         """
-        if not self.account:
-            raise ValueError("Account required for reputation submission")
-
-        # Submit neutral feedback with "init" tag to mark as initialization
-        tx = self.reputation_contract.functions.giveFeedback(
-            agent_id,
-            0,              # value: neutral (0)
-            2,              # valueDecimals: 2 decimal places
-            "init",         # tag1: marks as initialization entry
-            "",             # tag2: empty
-            "",             # endpoint: empty
-            "",             # feedbackURI: empty
-            b'\x00' * 32    # feedbackHash: zero bytes
-        ).build_transaction({
-            'chainId': self.chain_id,
-            'gas': 200000,
-            'gasPrice': self.w3.eth.gas_price,
-            'nonce': self.w3.eth.get_transaction_count(self.account.address)
-        })
-
-        signed_tx = self.account.sign_transaction(tx)
-        tx_hash = self.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-
-        print(f"📤 Initial reputation tx: {tx_hash.hex()}")
-
-        if not wait_for_receipt:
-            return {"tx_hash": tx_hash.hex(), "agent_id": agent_id}
-
-        receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
-
-        if receipt.status != 1:
-            raise RuntimeError(f"Initial reputation submission failed: tx={tx_hash.hex()}")
-
-        print(f"✅ Initial reputation submitted for agent {agent_id}")
-        return {"tx_hash": tx_hash.hex(), "agent_id": agent_id, "confirmed": True}
+        print(f"✅ Reputation initialized for agent {agent_id} (starts at 0)")
+        return {
+            "tx_hash": None,
+            "agent_id": agent_id,
+            "confirmed": True,
+            "initial_reputation": 0
+        }
 
     async def get_reputation(self, agent_id: int) -> Dict[str, Any]:
         """
