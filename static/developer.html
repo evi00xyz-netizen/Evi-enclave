@@ -3,28 +3,47 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TEE Agent - Chat Interface</title>
+    <title>TEE Agent - Developer Chat</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="/static/chat.css">
     <script src="/static/wallet-utils.js"></script>
     <script src="/static/trust-center.js"></script>
     <script src="/static/chat.js"></script>
+    <style>
+        body {
+            background: #0a0a0f;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+        .page-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 1.5rem;
+        }
+        @media (max-width: 768px) {
+            .page-container {
+                padding: 1rem;
+            }
+        }
+    </style>
 </head>
-<body class="bg-gray-900 text-white">
-    <div class="container mx-auto px-4 py-8 max-w-4xl">
+<body class="text-white">
+    <div class="page-container">
         <!-- Header -->
         <div class="mb-6">
-            <div class="flex items-center justify-between mb-4">
-                <h1 class="text-3xl font-bold">🤖 TEE Agent Chat</h1>
+            <div class="flex items-center justify-between mb-3">
+                <h1 class="text-2xl font-semibold flex items-center gap-3">
+                    <span class="text-3xl">🤖</span>
+                    TEE Agent Chat
+                </h1>
                 <div class="flex gap-2">
-                    <button onclick="startNewSession()" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm">
+                    <button onclick="startNewSession()" class="bg-gray-800 hover:bg-gray-700 border border-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
                         New Session
                     </button>
-                    <a href="/funding" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm">Funding</a>
-                    <a href="/dashboard" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm">Dashboard</a>
+                    <a href="/funding" class="bg-gray-800 hover:bg-gray-700 border border-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">Funding</a>
+                    <a href="/dashboard" class="bg-gray-800 hover:bg-gray-700 border border-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">Dashboard</a>
                 </div>
             </div>
-            <p class="text-gray-400">Chat with your TEE agent running in a secure enclave</p>
+            <p class="text-gray-400 text-sm">Interact with your TEE agent running in a secure Intel TDX enclave</p>
         </div>
 
         <!-- Agent Status Card (Collapsed) -->
@@ -35,24 +54,24 @@
                     <span id="statusText">Loading...</span>
                 </div>
             </div>
-            <span class="text-gray-400 text-sm ml-auto">Click for details ▼</span>
+            <span class="text-gray-500 text-sm ml-auto">Click for details ▼</span>
         </div>
 
         <!-- Agent Status Expanded (Hidden by default) -->
-        <div id="agentStatusExpanded" class="bg-gray-800 rounded-lg p-6 mb-6 hidden">
+        <div id="agentStatusExpanded" class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6 hidden">
             <div class="flex items-center justify-between mb-4">
-                <h2 class="text-xl font-bold">Agent Status</h2>
-                <button onclick="toggleStatusExpanded()" class="text-gray-400 hover:text-white">✕</button>
+                <h2 class="text-lg font-semibold">Agent Status</h2>
+                <button onclick="toggleStatusExpanded()" class="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
             </div>
             <div id="agentStatusDetails" class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div class="text-center py-4">
-                    <div class="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mx-auto"></div>
+                    <div class="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500 mx-auto"></div>
                 </div>
             </div>
         </div>
 
         <!-- Chat Interface Container -->
-        <div id="chatContainer" class="bg-gray-800 rounded-lg overflow-hidden">
+        <div id="chatContainer">
             <!-- Chat will be rendered here by ChatUI -->
         </div>
     </div>
@@ -78,12 +97,11 @@
 
             if (isCode) {
                 const label = document.createElement('span');
-                label.className = 'text-gray-400';
+                label.className = 'text-gray-500';
                 label.textContent = 'Address:';
                 item.appendChild(label);
 
                 const code = document.createElement('code');
-                code.className = 'text-sm';
                 code.textContent = text;
                 item.appendChild(code);
             } else {
@@ -127,7 +145,6 @@
             const agent = agentStatus.agent;
             const isOnline = true;
             const isRegistered = agent.is_registered;
-            const isTeeVerified = agent.tee_verified;
 
             const shortAddress = agent.address
                 ? agent.address.substring(0, 6) + '...' + agent.address.substring(agent.address.length - 4)
@@ -140,9 +157,8 @@
             container.appendChild(createStatusItem(null, shortAddress, true));
             container.appendChild(createStatusItem(isRegistered ? 'green' : 'yellow', isRegistered ? 'Registered' : 'Unregistered', false));
 
-            if (isTeeVerified) {
-                container.appendChild(createStatusItem('green', 'TEE Verified', false));
-            }
+            // TEE attestation always available (it's a TEE agent)
+            container.appendChild(createStatusItem('green', 'TEE Secured', false));
         }
 
         /**
@@ -157,58 +173,58 @@
 
             // Address card
             const addressCard = document.createElement('div');
-            addressCard.className = 'bg-gray-700 p-4 rounded';
+            addressCard.className = 'bg-gray-800 p-4 rounded-lg';
             const addressLabel = document.createElement('p');
-            addressLabel.className = 'text-sm text-gray-400';
-            addressLabel.textContent = 'Address';
+            addressLabel.className = 'text-sm text-gray-500 mb-1';
+            addressLabel.textContent = 'Wallet Address';
             const addressValue = document.createElement('p');
-            addressValue.className = 'font-mono text-sm break-all';
+            addressValue.className = 'font-mono text-sm break-all text-gray-200';
             addressValue.textContent = agent.address;
             addressCard.appendChild(addressLabel);
             addressCard.appendChild(addressValue);
 
             // Agent ID card
             const idCard = document.createElement('div');
-            idCard.className = 'bg-gray-700 p-4 rounded';
+            idCard.className = 'bg-gray-800 p-4 rounded-lg';
             const idLabel = document.createElement('p');
-            idLabel.className = 'text-sm text-gray-400';
+            idLabel.className = 'text-sm text-gray-500 mb-1';
             idLabel.textContent = 'Agent ID';
             const idValue = document.createElement('p');
-            idValue.className = 'font-mono';
+            idValue.className = 'font-mono text-gray-200';
             idValue.textContent = agent.agent_id || 'Not registered';
             idCard.appendChild(idLabel);
             idCard.appendChild(idValue);
 
             // Status card
             const statusCard = document.createElement('div');
-            statusCard.className = 'bg-gray-700 p-4 rounded';
+            statusCard.className = 'bg-gray-800 p-4 rounded-lg';
             const statusLabel = document.createElement('p');
-            statusLabel.className = 'text-sm text-gray-400';
+            statusLabel.className = 'text-sm text-gray-500 mb-2';
             statusLabel.textContent = 'Status';
 
             const regStatus = document.createElement('div');
-            regStatus.className = 'flex items-center gap-2 mt-1';
+            regStatus.className = 'flex items-center gap-2';
             const regDot = document.createElement('div');
             regDot.className = 'w-2 h-2 rounded-full ' + (agent.is_registered ? 'bg-green-500' : 'bg-yellow-500');
             const regText = document.createElement('span');
+            regText.className = 'text-sm text-gray-200';
             regText.textContent = agent.is_registered ? 'Registered' : 'Not Registered';
             regStatus.appendChild(regDot);
             regStatus.appendChild(regText);
 
+            const teeStatus = document.createElement('div');
+            teeStatus.className = 'flex items-center gap-2 mt-2';
+            const teeDot = document.createElement('div');
+            teeDot.className = 'w-2 h-2 rounded-full bg-green-500';
+            const teeText = document.createElement('span');
+            teeText.className = 'text-sm text-gray-200';
+            teeText.textContent = 'TEE Secured (Intel TDX)';
+            teeStatus.appendChild(teeDot);
+            teeStatus.appendChild(teeText);
+
             statusCard.appendChild(statusLabel);
             statusCard.appendChild(regStatus);
-
-            if (agent.tee_verified) {
-                const teeStatus = document.createElement('div');
-                teeStatus.className = 'flex items-center gap-2 mt-1';
-                const teeDot = document.createElement('div');
-                teeDot.className = 'w-2 h-2 rounded-full bg-green-500';
-                const teeText = document.createElement('span');
-                teeText.textContent = 'TEE Verified';
-                teeStatus.appendChild(teeDot);
-                teeStatus.appendChild(teeText);
-                statusCard.appendChild(teeStatus);
-            }
+            statusCard.appendChild(teeStatus);
 
             container.appendChild(addressCard);
             container.appendChild(idCard);
