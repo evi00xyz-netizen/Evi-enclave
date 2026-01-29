@@ -41,9 +41,6 @@ class RegistryAddresses:
     """ERC-8004 registry contract addresses."""
     identity: str
     reputation: str
-    tee_verifier: str
-    # Deprecated: ValidationRegistry is no longer part of ERC-8004 core
-    validation: Optional[str] = field(default=None)
 
 
 class BaseAgent(ABC):

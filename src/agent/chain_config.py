@@ -17,8 +17,6 @@ class ChainConfig:
     subgraph_url: str
     identity_registry: str
     reputation_registry: str
-    tee_registry: str
-    tee_verifier: str
 
     @property
     def caip2_chain_id(self) -> str:
@@ -58,8 +56,6 @@ CHAIN_CONFIGS: Dict[str, ChainConfig] = {
         subgraph_url=get_subgraph_url(),  # Will use SUBGRAPH_API_KEY env var
         identity_registry="0x8004A818BFB912233c491871b3d84c89A494BD9e",
         reputation_registry="0x8004B663056A597Dffe9eCcC1965A193B7388713",
-        tee_registry="0x034675a9541445087Cd73B2120d6c8AF7F2056E3",
-        tee_verifier="0x27F8C122618b05420c2f67A9464415586C30D18B",
     ),
     # Future chains - uncomment and configure as needed:
     # "base-mainnet": ChainConfig(
@@ -68,8 +64,6 @@ CHAIN_CONFIGS: Dict[str, ChainConfig] = {
     #     subgraph_url="https://...",
     #     identity_registry="0x...",
     #     reputation_registry="0x...",
-    #     tee_registry="0x...",
-    #     tee_verifier="0x...",
     # ),
 }
 
@@ -110,8 +104,6 @@ def get_chain_config_from_env() -> ChainConfig:
     - SUBGRAPH_URL: Override subgraph endpoint
     - IDENTITY_REGISTRY_ADDRESS: Override identity registry address
     - REPUTATION_REGISTRY_ADDRESS: Override reputation registry address
-    - TEE_REGISTRY_ADDRESS: Override TEE registry address
-    - TEE_VERIFIER_ADDRESS: Override TEE verifier address
 
     Returns:
         ChainConfig with any environment overrides applied.
@@ -126,8 +118,6 @@ def get_chain_config_from_env() -> ChainConfig:
         subgraph_url=os.getenv("SUBGRAPH_URL", base_config.subgraph_url),
         identity_registry=os.getenv("IDENTITY_REGISTRY_ADDRESS", base_config.identity_registry),
         reputation_registry=os.getenv("REPUTATION_REGISTRY_ADDRESS", base_config.reputation_registry),
-        tee_registry=os.getenv("TEE_REGISTRY_ADDRESS", base_config.tee_registry),
-        tee_verifier=os.getenv("TEE_VERIFIER_ADDRESS", base_config.tee_verifier),
     )
 
 
@@ -151,10 +141,6 @@ def validate_chain_config(config: ChainConfig) -> None:
         errors.append("identity_registry must be a valid address")
     if not config.reputation_registry or not config.reputation_registry.startswith("0x"):
         errors.append("reputation_registry must be a valid address")
-    if not config.tee_registry or not config.tee_registry.startswith("0x"):
-        errors.append("tee_registry must be a valid address")
-    if not config.tee_verifier or not config.tee_verifier.startswith("0x"):
-        errors.append("tee_verifier must be a valid address")
 
     if errors:
         raise ValueError(f"Invalid chain config: {', '.join(errors)}")
@@ -168,5 +154,3 @@ def log_chain_config(config: ChainConfig) -> None:
     print(f"  Subgraph URL: {config.subgraph_url[:50]}..." if config.subgraph_url else "  Subgraph URL: None")
     print(f"  Identity Registry: {config.identity_registry}")
     print(f"  Reputation Registry: {config.reputation_registry}")
-    print(f"  TEE Registry: {config.tee_registry}")
-    print(f"  TEE Verifier: {config.tee_verifier}")

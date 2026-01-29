@@ -60,17 +60,14 @@
         let state = {
             wallet: null,
             registration: null,
-            tee: null,
             chainConfig: null,
             registrationTx: null,
-            teeTx: null,
             reputationTx: null,
             // Unified registration flow state
             unifiedRegistration: {
                 started: false,
                 identity: { status: 'waiting', message: 'Waiting...', txHash: null, agentId: null },
-                reputation: { status: 'waiting', message: 'Waiting for identity...', txHash: null },
-                tee: { status: 'waiting', message: 'Waiting for identity...', txHash: null }
+                reputation: { status: 'waiting', message: 'Waiting for identity...', txHash: null }
             }
         };
 
@@ -149,7 +146,7 @@
             if (!reg.started) {
                 // Not started - show register button
                 content.innerHTML = `
-                    <p class="text-sm text-gray-400 mb-4">Register your agent on-chain for Identity, Reputation, and TEE verification.</p>
+                    <p class="text-sm text-gray-400 mb-4">Register your agent on-chain for Identity and Reputation.</p>
                     <button onclick="startUnifiedRegistration()" class="bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded font-semibold">
                         Register Agent
                     </button>
@@ -162,39 +159,26 @@
                 <div class="space-y-3 mb-6">
                     ${renderStatusCard('Identity', 'Identity Registry', reg.identity)}
                     ${renderStatusCard('Reputation', 'Reputation', reg.reputation)}
-                    ${renderStatusCard('Tee', 'TEE Verification', reg.tee)}
                 </div>
             `;
 
             // Determine button state
             const identityDone = reg.identity.status === 'success';
             const reputationDone = reg.reputation.status === 'success';
-            const teeDone = reg.tee.status === 'success';
-            const canProceed = identityDone && reputationDone;
-            const allDone = identityDone && reputationDone && teeDone;
+            const allDone = identityDone && reputationDone;
 
             let buttonHtml = '';
             let statusMessageHtml = '';
 
-            if (canProceed) {
+            if (allDone) {
                 buttonHtml = `
                     <button onclick="goToDeveloperDashboard()" class="bg-green-600 hover:bg-green-700 px-6 py-3 rounded font-semibold w-full">
                         Go to Developer Dashboard →
                     </button>
                 `;
-
-                if (!teeDone) {
-                    statusMessageHtml = `
-                        <p class="text-yellow-400 text-sm mt-3 flex items-center gap-2">
-                            <span class="animate-pulse">⚠</span>
-                            TEE verification still in progress (completes in background)
-                        </p>
-                    `;
-                } else {
-                    statusMessageHtml = `
-                        <p class="text-green-400 text-sm mt-3">✓ All registrations complete</p>
-                    `;
-                }
+                statusMessageHtml = `
+                    <p class="text-green-400 text-sm mt-3">✓ All registrations complete</p>
+                `;
             } else {
                 // Still in progress
                 buttonHtml = `
@@ -270,53 +254,25 @@
                 reg.identity.agentId = identityResult.agentId;
                 state.registrationTx = identityResult.txHash;
 
-                // Update reputation and TEE to in_progress
+                // Update reputation to in_progress
                 reg.reputation.status = 'in_progress';
                 reg.reputation.message = 'Submitting initial entry...';
-                reg.tee.status = 'in_progress';
-                reg.tee.message = 'Preparing attestation...';
                 renderUnifiedRegistration();
 
-                // Step 2: Start Reputation and TEE in parallel
-                const [reputationPromise, teePromise] = [
-                    registerReputationFlow(),
-                    registerTEEFlow()
-                ];
+                // Step 2: Submit reputation
+                const reputationResult = await registerReputationFlow();
 
-                // Handle reputation result
-                reputationPromise.then(result => {
-                    if (result.success) {
-                        reg.reputation.status = 'success';
-                        reg.reputation.message = 'Confirmed';
-                        reg.reputation.txHash = result.txHash;
-                        state.reputationTx = result.txHash;
-                    } else {
-                        reg.reputation.status = 'error';
-                        reg.reputation.message = result.error || 'Failed';
-                    }
-                    renderUnifiedRegistration();
-                });
-
-                // Handle TEE result
-                teePromise.then(result => {
-                    if (result.success) {
-                        reg.tee.status = 'success';
-                        reg.tee.message = 'Verified';
-                        reg.tee.txHash = result.txHash;
-                        state.teeTx = result.txHash;
-                    } else {
-                        reg.tee.status = 'error';
-                        reg.tee.message = result.error || 'Failed';
-                    }
-                    renderUnifiedRegistration();
-
-                    // If all done, update step 3
-                    if (reg.identity.status === 'success' &&
-                        reg.reputation.status === 'success' &&
-                        reg.tee.status === 'success') {
-                        markAgentReady();
-                    }
-                });
+                if (reputationResult.success) {
+                    reg.reputation.status = 'success';
+                    reg.reputation.message = 'Confirmed';
+                    reg.reputation.txHash = reputationResult.txHash;
+                    state.reputationTx = reputationResult.txHash;
+                    markAgentReady();
+                } else {
+                    reg.reputation.status = 'error';
+                    reg.reputation.message = reputationResult.error || 'Failed';
+                }
+                renderUnifiedRegistration();
 
             } catch (error) {
                 reg.identity.status = 'error';
@@ -387,62 +343,6 @@
             }
         }
 
-        async function registerTEEFlow() {
-            try {
-                // First prepare TEE attestation
-                const prepResult = await apiClient.prepareTEE();
-
-                if (!prepResult.success) {
-                    return { success: false, error: prepResult.error || 'TEE preparation failed' };
-                }
-
-                // Poll for preparation to complete
-                let prepared = false;
-                let attempts = 0;
-                const maxAttempts = 40; // ~2 minutes at 3s intervals
-
-                while (!prepared && attempts < maxAttempts) {
-                    await new Promise(resolve => setTimeout(resolve, 3000));
-                    attempts++;
-
-                    const statusResult = await apiClient.getTEEStatus();
-
-                    if (statusResult.success) {
-                        if (statusResult.data.state === 'ready') {
-                            prepared = true;
-                        } else if (statusResult.data.state === 'error') {
-                            return { success: false, error: statusResult.data.error || 'TEE preparation failed' };
-                        } else {
-                            // Still preparing - update message
-                            state.unifiedRegistration.tee.message = `Preparing attestation... (${statusResult.data.elapsed_seconds || 0}s)`;
-                            renderUnifiedRegistration();
-                        }
-                    }
-                }
-
-                if (!prepared) {
-                    return { success: false, error: 'TEE preparation timeout' };
-                }
-
-                // Now submit TEE verification
-                state.unifiedRegistration.tee.message = 'Submitting proof...';
-                renderUnifiedRegistration();
-
-                const teeResult = await apiClient.registerTEE();
-
-                if (!teeResult.success) {
-                    return { success: false, error: teeResult.error || 'TEE verification failed' };
-                }
-
-                return {
-                    success: true,
-                    txHash: teeResult.data.tx_hash
-                };
-            } catch (error) {
-                return { success: false, error: error.message || 'TEE verification failed' };
-            }
-        }
-
         async function retryIdentity() {
             state.unifiedRegistration.identity.status = 'in_progress';
             state.unifiedRegistration.identity.message = 'Retrying...';
@@ -456,16 +356,11 @@
                 state.unifiedRegistration.identity.agentId = result.agentId;
                 state.unifiedRegistration.identity.txHash = result.txHash;
 
-                // Trigger parallel flows if not already done
+                // Trigger reputation flow if not already done
                 if (state.unifiedRegistration.reputation.status === 'waiting') {
                     state.unifiedRegistration.reputation.status = 'in_progress';
                     state.unifiedRegistration.reputation.message = 'Submitting initial entry...';
                     registerReputationFlow().then(handleReputationResult);
-                }
-                if (state.unifiedRegistration.tee.status === 'waiting') {
-                    state.unifiedRegistration.tee.status = 'in_progress';
-                    state.unifiedRegistration.tee.message = 'Preparing attestation...';
-                    registerTEEFlow().then(handleTeeResult);
                 }
             } else {
                 state.unifiedRegistration.identity.status = 'error';
@@ -483,15 +378,6 @@
             handleReputationResult(result);
         }
 
-        async function retryTee() {
-            state.unifiedRegistration.tee.status = 'in_progress';
-            state.unifiedRegistration.tee.message = 'Retrying...';
-            renderUnifiedRegistration();
-
-            const result = await registerTEEFlow();
-            handleTeeResult(result);
-        }
-
         function handleReputationResult(result) {
             const reg = state.unifiedRegistration;
             if (result.success) {
@@ -499,28 +385,14 @@
                 reg.reputation.message = 'Confirmed';
                 reg.reputation.txHash = result.txHash;
                 state.reputationTx = result.txHash;
-            } else {
-                reg.reputation.status = 'error';
-                reg.reputation.message = result.error || 'Failed';
-            }
-            renderUnifiedRegistration();
-        }
-
-        function handleTeeResult(result) {
-            const reg = state.unifiedRegistration;
-            if (result.success) {
-                reg.tee.status = 'success';
-                reg.tee.message = 'Verified';
-                reg.tee.txHash = result.txHash;
-                state.teeTx = result.txHash;
 
                 // Check if all done
-                if (reg.identity.status === 'success' && reg.reputation.status === 'success') {
+                if (reg.identity.status === 'success') {
                     markAgentReady();
                 }
             } else {
-                reg.tee.status = 'error';
-                reg.tee.message = result.error || 'Failed';
+                reg.reputation.status = 'error';
+                reg.reputation.message = result.error || 'Failed';
             }
             renderUnifiedRegistration();
         }
@@ -574,12 +446,6 @@
                 state.unifiedRegistration.identity.message = `Registered (ID: ${data.agent.agent_id})`;
                 state.unifiedRegistration.identity.agentId = data.agent.agent_id;
 
-                // Check TEE status
-                if (data.agent.tee_verified) {
-                    state.unifiedRegistration.tee.status = 'success';
-                    state.unifiedRegistration.tee.message = 'Verified';
-                }
-
                 // For reputation, we'll assume it's done if agent is registered
                 // (In real usage, could check subgraph for init feedback)
                 state.unifiedRegistration.reputation.status = 'success';
@@ -589,10 +455,7 @@
                 renderUnifiedRegistration();
 
                 document.getElementById('step3').classList.remove('opacity-50');
-
-                if (data.agent.tee_verified) {
-                    markAgentReady();
-                }
+                markAgentReady();
             } else {
                 // Not registered - show register button
                 step2.className = 'bg-gray-800 rounded-lg p-6';

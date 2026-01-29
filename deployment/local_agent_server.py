@@ -30,7 +30,6 @@ import uvicorn
 from src.agent.base import AgentConfig, RegistryAddresses
 from src.templates.server_agent import ServerAgent
 from src.agent.tee_auth import TEEAuthenticator
-from src.agent.tee_verifier import TEEVerifier
 from src.agent.chain_config import get_chain_config_from_env, log_chain_config
 from src.agent.session_store import SessionStore
 from src.agent.chat_agent import ChatAgent, INITIAL_GREETING
@@ -73,7 +72,6 @@ app.mount("/static", StaticFiles(directory=static_path), name="static")
 # Global agent instance
 agent: Optional[ServerAgent] = None
 tee_auth: Optional[TEEAuthenticator] = None
-tee_verifier: Optional[TEEVerifier] = None
 
 # Chat interface components
 session_store: Optional[SessionStore] = None
@@ -187,7 +185,7 @@ async def prepare_tee_attestation():
 @app.on_event("startup")
 async def startup_event():
     """Initialize agent on startup."""
-    global agent, tee_auth, tee_verifier
+    global agent, tee_auth
 
     print("=" * 80)
     print("STARTING LOCAL AGENT SERVER")
@@ -240,20 +238,11 @@ async def startup_event():
     registries = RegistryAddresses(
         identity=chain_config.identity_registry,
         reputation=chain_config.reputation_registry,
-        validation="0x0000000000000000000000000000000000000000",  # Not used
-        tee_verifier=chain_config.tee_verifier
     )
 
     # Initialize agent
     print("\n🤖 Initializing agent...")
     agent = ServerAgent(config, registries)
-
-    # Initialize TEE verifier (uses chain_config for addresses)
-    tee_verifier = TEEVerifier(
-        w3=agent._registry_client.w3,
-        account=tee_auth.account,
-        config=chain_config
-    )
 
     # Generate agent card
     print("\n📋 Generating agent card...")
@@ -435,7 +424,6 @@ async def get_status():
 
     is_registered = False
     agent_id = None
-    tee_verified = False
 
     # Always check on-chain registration to prevent spam registrations
     # Use fast path if we already have agent_id in memory (1 RPC call vs 1000)
@@ -450,9 +438,6 @@ async def get_status():
         # Update in-memory state
         agent.agent_id = agent_id
         agent.is_registered = True
-
-        if tee_verifier:
-            tee_verified = await tee_verifier.check_tee_registered(agent_id, agent_address)
     else:
         # Clear in-memory state if not registered on-chain
         agent.agent_id = None
@@ -465,7 +450,6 @@ async def get_status():
             "address": agent_address,
             "agent_id": agent_id,
             "is_registered": is_registered,
-            "tee_verified": tee_verified,
             "chain_id": agent.config.chain_id
         },
         "tee": {
@@ -726,178 +710,6 @@ async def get_tee_status():
     return response
 
 
-@app.post("/api/tee/register")
-async def register_tee():
-    """Register TEE with proof."""
-    global agent, tee_auth, tee_verifier, tee_preparation
-
-    if not agent or not tee_auth or not tee_verifier:
-        raise HTTPException(status_code=503, detail="Agent not initialized")
-
-    if not agent.is_registered or not agent.agent_id:
-        raise HTTPException(status_code=400, detail="Agent must be registered first")
-
-    # Check if we have cached proof ready
-    use_cached = False
-    if tee_preparation["state"] == "ready" and tee_preparation["proof_data"]:
-        if tee_preparation["expires_at"] and datetime.utcnow().timestamp() < tee_preparation["expires_at"]:
-            use_cached = True
-            print("🚀 TEE Register: Using cached proof (fast path)")
-
-    if use_cached:
-        # Fast path: use cached proof
-        proof_data = tee_preparation["proof_data"]
-
-        # Check if already registered
-        if await tee_verifier.check_tee_registered(agent.agent_id, proof_data["pubkey"]):
-            return {"success": True, "already_registered": True, "agent_id": agent.agent_id, "pubkey": proof_data["pubkey"]}
-
-        try:
-            # Submit transaction with cached proof
-            tx = tee_verifier.registry_contract.functions.addKey(
-                agent.agent_id,
-                proof_data["tee_arch"],
-                proof_data["code_measurement"],
-                proof_data["pubkey"],
-                proof_data["code_config_uri"],
-                tee_verifier.verifier_address,
-                proof_data["proof"]
-            ).build_transaction({
-                'chainId': tee_verifier.w3.eth.chain_id,
-                'gas': 500000,
-                'gasPrice': tee_verifier.w3.eth.gas_price,
-                'nonce': tee_verifier.w3.eth.get_transaction_count(tee_verifier.account.address)
-            })
-
-            signed_tx = tee_verifier.account.sign_transaction(tx)
-            tx_hash = tee_verifier.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-
-            print(f"📤 TEE tx (cached): {tx_hash.hex()}")
-
-            receipt = tee_verifier.w3.eth.wait_for_transaction_receipt(tx_hash)
-
-            if receipt.status != 1:
-                raise RuntimeError(f"TEE registration failed: tx={tx_hash.hex()}")
-
-            # Clear cache after successful registration
-            tee_preparation["state"] = "idle"
-            tee_preparation["proof_data"] = None
-
-            # Build explorer URL and return
-            chain_configs = {
-                84532: "https://sepolia.basescan.org",
-                8453: "https://basescan.org",
-                11155111: "https://sepolia.etherscan.io",
-                1: "https://etherscan.io"
-            }
-            chain_id = agent.config.chain_id
-            explorer_base = chain_configs.get(chain_id, "https://etherscan.io")
-
-            return {
-                "success": True,
-                "tx_hash": tx_hash.hex(),
-                "agent_id": agent.agent_id,
-                "pubkey": proof_data["pubkey"],
-                "explorer_url": f"{explorer_base}/tx/{tx_hash.hex()}",
-                "used_cache": True
-            }
-        except Exception as e:
-            import traceback
-            print(f"TEE registration error (cached): {str(e)}")
-            print(traceback.format_exc())
-            raise HTTPException(status_code=500, detail=f"TEE registration failed: {str(e)}")
-
-    else:
-        # Slow path: full attestation flow
-        attestation = await tee_auth.get_attestation()
-
-        # Check if attestation failed
-        if "error" in attestation:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to get TEE attestation: {attestation.get('error')}"
-            )
-
-        # Check if TEE is disabled
-        if attestation.get("mode") == "development":
-            raise HTTPException(
-                status_code=400,
-                detail="TEE is disabled. Cannot register without TEE attestation."
-            )
-
-        # Validate required fields
-        if "quote" not in attestation or "event_log" not in attestation:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Invalid attestation structure. Missing required fields. Got: {list(attestation.keys())}"
-            )
-
-        agent_address = await agent._get_agent_address()
-
-        agent_domain = os.getenv('AGENT_DOMAIN', '')
-
-        # Strip protocol prefixes
-        for prefix in ['https://', 'http://', 'ipfs://', 'ipns://']:
-            if agent_domain.startswith(prefix):
-                agent_domain = agent_domain[len(prefix):]
-
-        print(f"🔍 AGENT_DOMAIN: {agent_domain}")
-
-        # Parse domain: format is {app_id}-{port}.{dstack_domain} or localhost:port for dev
-        if '-' in agent_domain and '.' in agent_domain:
-            # Production: app_id-port.dstack_domain
-            app_id = agent_domain.split('-')[0]
-            dstack_domain = agent_domain.split('.', 1)[1]
-        else:
-            # Local dev: localhost:port or just domain
-            app_id = agent_domain.split(':')[0].split('.')[0]
-            dstack_domain = os.getenv('DSTACK_GATEWAY_DOMAIN', 'local.dev')
-
-        print(f"🔍 app_id: {app_id}")
-        print(f"🔍 dstack_domain: {dstack_domain}")
-
-        tdx_quote = attestation['quote']
-        event_log = attestation['event_log']
-
-        try:
-            result = await tee_verifier.register_tee_key(
-                agent_id=agent.agent_id,
-                agent_address=agent_address,
-                tdx_quote=tdx_quote,
-                app_id=app_id,
-                dstack_domain=dstack_domain,
-                event_log=event_log,
-            )
-
-            if result.get("already_registered"):
-                return {"success": True, "already_registered": True, "agent_id": agent.agent_id, "pubkey": result["pubkey"]}
-
-            # Get dynamic explorer URL based on chain config
-            chain_configs = {
-                84532: "https://sepolia.basescan.org",
-                8453: "https://basescan.org",
-                11155111: "https://sepolia.etherscan.io",
-                1: "https://etherscan.io"
-            }
-            chain_id = agent.config.chain_id
-            explorer_base = chain_configs.get(chain_id, "https://etherscan.io")
-            explorer_url = f"{explorer_base}/tx/{result['tx_hash']}"
-
-            return {
-                "success": True,
-                "tx_hash": result["tx_hash"],
-                "agent_id": agent.agent_id,
-                "pubkey": result["pubkey"],
-                "explorer_url": explorer_url,
-                "used_cache": False
-            }
-        except Exception as e:
-            import traceback
-            print(f"TEE registration error: {str(e)}")
-            print(traceback.format_exc())
-            raise HTTPException(status_code=500, detail=f"TEE registration failed: {str(e)}")
-
-
 @app.post("/api/metadata/update")
 async def update_metadata():
     """Update on-chain metadata."""
@@ -1072,7 +884,7 @@ async def execute_task(task_id: str, request: Dict[str, Any]):
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
     """Send a message to the chat agent."""
-    global session_store, agent, tee_auth, tee_verifier
+    global session_store, agent, tee_auth
 
     if not agent:
         raise HTTPException(status_code=503, detail="Agent not initialized")
@@ -1092,17 +904,11 @@ async def chat_endpoint(request: ChatRequest):
         1: "Ethereum Mainnet"
     }
 
-    tee_status = "Pending"
-    if tee_verifier and agent.agent_id:
-        if await tee_verifier.check_tee_registered(agent.agent_id, agent_address):
-            tee_status = "Verified"
-
     agent_context = {
         "agent_id": agent.agent_id or "Not registered",
         "wallet_address": agent_address,
         "chain_name": chain_configs.get(agent.config.chain_id, f"Chain {agent.config.chain_id}"),
-        "chain_id": agent.config.chain_id,
-        "tee_status": tee_status
+        "chain_id": agent.config.chain_id
     }
 
     # Build tool handlers
@@ -1314,19 +1120,10 @@ async def _handle_get_agent_card(args: dict) -> dict:
 
 async def _handle_get_registration_status(args: dict) -> dict:
     """Handle get_registration_status tool."""
-    agent_address = await agent._get_agent_address()
-    tee_verified = False
-
-    if tee_verifier and agent.agent_id:
-        tee_verified = await tee_verifier.check_tee_registered(agent.agent_id, agent_address)
-
     return {
         "identity": {
             "registered": agent.is_registered,
             "agent_id": agent.agent_id
-        },
-        "tee": {
-            "verified": tee_verified
         }
     }
 
@@ -1340,8 +1137,7 @@ async def _handle_get_chain_config(args: dict) -> dict:
         "rpc_url": chain_config.rpc_url,
         "contracts": {
             "identity_registry": chain_config.identity_registry,
-            "reputation_registry": chain_config.reputation_registry,
-            "tee_verifier": chain_config.tee_verifier
+            "reputation_registry": chain_config.reputation_registry
         }
     }
 

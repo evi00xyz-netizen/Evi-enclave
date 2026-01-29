@@ -103,3 +103,4 @@ deployment/reports/
 
 # dstack api spec
 dstack-api-spec.json.playwright-mcp/
+.playwright-mcp/
