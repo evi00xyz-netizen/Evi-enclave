@@ -14,7 +14,7 @@ from gql import gql, Client
 from gql.transport.aiohttp import AIOHTTPTransport
 from gql.transport.exceptions import TransportQueryError
 
-from .chain_config import ChainConfig, get_chain_config_from_env
+from .chain_config import ChainConfig, get_chain_config_from_env, get_subgraph_url
 
 
 @dataclass
@@ -42,17 +42,29 @@ class SubgraphClient:
         Initialize subgraph client.
 
         Args:
-            subgraph_url: Subgraph GraphQL endpoint. If None, uses chain config.
+            subgraph_url: Subgraph GraphQL endpoint. If None, computed from SUBGRAPH_API_KEY.
             cache_ttl_seconds: TTL for cached responses (default: 30 seconds).
-            config: Chain configuration. If None, loads from environment.
+            config: Chain configuration (not used for subgraph URL - always computed fresh).
         """
-        if config is None:
-            config = get_chain_config_from_env()
+        # ALWAYS compute subgraph URL fresh from environment
+        # This ensures SUBGRAPH_API_KEY is picked up after dotenv loads
+        if subgraph_url:
+            self.subgraph_url = subgraph_url
+        else:
+            # Compute URL with API key from environment
+            self.subgraph_url = get_subgraph_url()
 
-        self.subgraph_url = subgraph_url or config.subgraph_url
         self.cache_ttl = timedelta(seconds=cache_ttl_seconds)
         self._cache: Dict[str, CacheEntry] = {}
         self._client: Optional[Client] = None
+
+        # Log the URL being used (hide API key)
+        import os
+        api_key = os.getenv("SUBGRAPH_API_KEY", "")
+        if api_key and api_key in self.subgraph_url:
+            print(f"📊 Subgraph client initialized with API key: {api_key[:8]}...")
+        else:
+            print(f"⚠️  Subgraph client initialized WITHOUT API key - queries will fail")
 
     def _get_client(self) -> Client:
         """Get or create GraphQL client."""
