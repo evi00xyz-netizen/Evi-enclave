@@ -41,6 +41,9 @@ setup(
         "fastapi>=0.104.0",
         "uvicorn>=0.24.0",
         "eth-utils>=2.2.0",
+        "agent0-sdk>=0.31.0",
+        "gql[aiohttp]>=3.5.0",
+        "anthropic>=0.40.0",
     ],
     extras_require={
         "ai": [
