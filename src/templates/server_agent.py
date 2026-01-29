@@ -447,32 +447,42 @@ class ServerAgent(BaseAgent):
         }
 
     async def _create_agent_card(self) -> Dict[str, Any]:
-        """Create ERC-8004 agent card."""
+        """Create ERC-8004 agent card reflecting actual chat interface capabilities."""
         from ..agent.agent_card import create_tee_agent_card
         import os
 
         agent_address = await self._get_agent_address()
 
+        # Capabilities match the actual chat interface tools
         capabilities = [
-            ("shell-execution", "Execute shell commands via AIO Sandbox"),
-            ("file-operations", "Read/write files in sandbox"),
-            ("jupyter-execution", "Run Python/Node.js code"),
-            ("ai-code-generation", "Generate and execute code from natural language with TEE attestation"),
-            ("ai-mcp-control", "Control sandbox via MCP tools using natural language with TEE attestation")
-        ]
+            # Wallet & Cryptographic Operations
+            ("wallet-info", "Query wallet address, balance, and network details"),
+            ("message-signing", "Sign messages with TEE-derived private key"),
+            ("signature-verification", "Verify signed messages and addresses"),
 
-        # Only add AI capabilities if generator is available
-        if not self.ai_generator:
-            capabilities = [c for c in capabilities if c[0] not in ["ai-code-generation", "ai-mcp-control"]]
+            # TEE Attestation
+            ("tee-attestation", "Generate Intel TDX attestation proofs for verifiable execution"),
+
+            # Code Execution
+            ("python-execution", "Execute Python code with network access"),
+            ("shell-execution", "Execute shell commands in sandboxed environment"),
+
+            # ERC-8004 Identity & Reputation
+            ("identity-registry", "Query and manage on-chain agent registration"),
+            ("reputation-system", "Query agent reputation and submit feedback"),
+        ]
 
         # Get identity registry address
         identity_registry = self.config.registries.get('identity') if hasattr(self.config, 'registries') else None
         if not identity_registry:
             identity_registry = os.getenv("IDENTITY_REGISTRY_ADDRESS")
 
+        # Get agent name from config or environment
+        agent_name = os.getenv("AGENT_NAME", "TEE Agent")
+
         return create_tee_agent_card(
-            name=f"TEE Server Agent - {self.config.domain}",
-            description="TEE-secured agent with AIO Sandbox integration for secure code execution",
+            name=agent_name,
+            description="AI agent secured by Intel TDX with on-chain identity (ERC-8004) and verifiable execution",
             domain=self.config.domain,
             agent_address=agent_address,
             agent_id=self.agent_id if self.is_registered else None,

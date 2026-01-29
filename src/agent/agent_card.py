@@ -291,20 +291,18 @@ def create_tee_agent_card(
         for cap_name, cap_desc in capabilities:
             builder.add_capability(cap_name, cap_desc)
 
-    # Set transport
+    # Set transport - chat API endpoint
     builder.set_transport(
         "http",
-        f"https://{domain}/api",
-        authentication={"type": "signature", "scheme": "EIP-712"}
+        f"https://{domain}",
+        authentication={"type": "none", "note": "Chat interface is publicly accessible"}
     )
 
     # Set trust models for TEE agent
-    builder.set_trust_models(["tee-attestation", "feedback", "inference-validation"])
+    builder.set_trust_models(["tee-attestation", "feedback"])
 
     # Set AI model from parameter or environment variable
     model = ai_model or os.getenv('AI_MODEL')
-    if not model:
-        print("⚠️  AI_MODEL not provided and environment variable not set")
     builder.card["aiModel"] = model
 
     # Set infrastructure
@@ -314,12 +312,18 @@ def create_tee_agent_card(
         attestation_provider="dstack",
         additional_info={
             "teeType": "Intel TDX",
-            "attested": True
+            "runtime": "dstack TEE VM"
         }
     )
 
     # Build the card
     card = builder.build()
+
+    # Add agent wallet address
+    card["wallet"] = {
+        "address": agent_address,
+        "chain": f"eip155:{chain_id}"
+    }
 
     # Add registrations if agent is registered
     if agent_id is not None and identity_registry:
