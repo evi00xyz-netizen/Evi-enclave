@@ -596,10 +596,20 @@ class RegistryClient:
 
         # Fall back to RPC
         try:
+            # First get client addresses (contract requires non-empty clientAddresses)
+            clients = self.reputation_contract.functions.getClients(agent_id).call()
+
+            if not clients:
+                # No clients = no feedback yet
+                return {
+                    "feedbackCount": 0,
+                    "averageScore": 0
+                }
+
             # getSummary returns (count: uint64, summaryValue: int128, summaryValueDecimals: uint8)
             result = self.reputation_contract.functions.getSummary(
                 agent_id,
-                [],  # No client address filter (empty array)
+                clients,  # Pass actual client addresses
                 "",  # No tag1 filter
                 ""   # No tag2 filter
             ).call()

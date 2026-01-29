@@ -398,8 +398,14 @@ class ChatUI {
         // Bold (**...**)
         html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
 
-        // Bullet points (- ...)
+        // Bullet points (- ... or * ...)
         html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+        html = html.replace(/^\* (.+)$/gm, '<li>$1</li>');
+
+        // Numbered lists (1. 2. 3. ...)
+        html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+
+        // Wrap consecutive list items in ul
         html = html.replace(/(<li>.*<\/li>)+/g, '<ul>$&</ul>');
 
         // Line breaks

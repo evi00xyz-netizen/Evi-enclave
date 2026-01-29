@@ -238,8 +238,15 @@ class ChatAgent:
         self.code_timeout = int(os.getenv("CODE_EXECUTION_TIMEOUT", "30"))
 
         # Initialize Anthropic client with Redpill backend
+        # Fall back to REDPILL_API_KEY if ANTHROPIC_AUTH_TOKEN not set
+        api_key = os.getenv("ANTHROPIC_AUTH_TOKEN") or os.getenv("REDPILL_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "Chat requires ANTHROPIC_AUTH_TOKEN or REDPILL_API_KEY environment variable"
+            )
+
         self.client = Anthropic(
-            api_key=os.getenv("ANTHROPIC_AUTH_TOKEN"),
+            api_key=api_key,
             base_url=os.getenv("ANTHROPIC_BASE_URL", "https://api.redpill.ai")
         )
         self.model = os.getenv("ANTHROPIC_MODEL", "openai/gpt-oss-120b")

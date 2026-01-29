@@ -159,6 +159,8 @@
     overflow-x: auto;
     max-height: 200px;
     overflow-y: auto;
+    word-break: break-all;
+    white-space: pre-wrap;
 }
 
 .tool-result.collapsed .tool-output {
