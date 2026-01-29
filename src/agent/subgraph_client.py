@@ -160,10 +160,18 @@ class SubgraphClient:
                 self._set_cached(cache_key, agent_data)
                 return agent_data
         except TransportQueryError as e:
-            print(f"Subgraph query error (get_agent_by_owner): {e}")
+            error_msg = str(e)
+            if "401" in error_msg or "Unauthorized" in error_msg:
+                print(f"⚠️  Subgraph auth failed - check SUBGRAPH_API_KEY")
+            else:
+                print(f"⚠️  Subgraph query error: {e}")
             return None
         except Exception as e:
-            print(f"Subgraph error (get_agent_by_owner): {e}")
+            error_msg = str(e)
+            if "api-key" in error_msg.lower() or "api_key" in error_msg.lower():
+                print(f"⚠️  Subgraph requires API key - set SUBGRAPH_API_KEY env var")
+            else:
+                print(f"⚠️  Subgraph error: {e}")
             return None
 
     async def get_agent_reputation(

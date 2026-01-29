@@ -257,7 +257,8 @@ class RegistryClient:
         """
         Check if agent is registered (owns an NFT).
 
-        Uses subgraph for fast lookup if available, falls back to RPC.
+        Uses subgraph for fast lookup (requires SUBGRAPH_API_KEY).
+        Falls back to balance check if subgraph unavailable.
 
         Args:
             domain: Unused (kept for compatibility)
@@ -269,6 +270,7 @@ class RegistryClient:
         """
         # Try subgraph first (fast path - instant lookup)
         if self.subgraph and agent_address:
+            print(f"🔍 Checking subgraph for agent by owner: {agent_address}")
             agent_data = await self.subgraph.get_agent_by_owner(agent_address)
             if agent_data and agent_data.get('agentId'):
                 agent_id_from_subgraph = int(agent_data['agentId'])
@@ -278,6 +280,8 @@ class RegistryClient:
                     "agent_id": agent_id_from_subgraph,
                     "agent_address": agent_address
                 }
+            elif agent_data is None:
+                print(f"⚠️  Subgraph returned no data - check SUBGRAPH_API_KEY")
 
         # FAST PATH: If we know the agent_id, use direct verification (1 RPC call)
         if agent_id is not None:
@@ -290,44 +294,29 @@ class RegistryClient:
                     "agent_address": result["owner"]
                 }
             else:
-                print(f"⚠️  Fast verification failed, falling back to slow path")
+                print(f"⚠️  Fast verification failed for agent ID {agent_id}")
 
-        # SLOW PATH: RPC-based lookup
-        # Note: Contract does NOT have tokenOfOwnerByIndex (not ERC721Enumerable)
-        # We must use brute force search by checking ownerOf for each token ID
+        # BALANCE CHECK: Quick check if address owns any NFT
+        # Note: Contract is NOT ERC721Enumerable, so we can't enumerate tokens
+        # If subgraph is down and we don't know agent_id, we can only check balance
         try:
             if agent_address:
                 checksum_address = Web3.to_checksum_address(agent_address)
-                print(f"🔍 Checking registration for: {checksum_address}")
-
                 balance = self.identity_contract.functions.balanceOf(checksum_address).call()
-                print(f"🔍 NFT Balance: {balance}")
+                print(f"🔍 NFT Balance for {checksum_address}: {balance}")
 
                 if balance > 0:
-                    # Brute force search - contract doesn't support enumeration
-                    print(f"🔍 Searching for token ID (checking up to 1000 tokens)...")
-                    for potential_id in range(1, 1000):
-                        try:
-                            owner = self.identity_contract.functions.ownerOf(potential_id).call()
-                            if owner.lower() == checksum_address.lower():
-                                print(f"✅ Found agent ID {potential_id}")
-                                return {
-                                    "registered": True,
-                                    "agent_id": potential_id,
-                                    "agent_address": agent_address
-                                }
-                        except:
-                            continue
-
-                    # Balance > 0 but couldn't find token (maybe ID > 1000)
-                    print(f"⚠️  Has NFT but couldn't find token ID in range 1-1000")
+                    # Agent owns NFT but we can't determine ID without subgraph
+                    print(f"⚠️  Agent has NFT but ID unknown (subgraph unavailable)")
+                    print(f"💡 Set SUBGRAPH_API_KEY for instant agent ID lookup")
                     return {
                         "registered": True,
                         "agent_id": None,
-                        "agent_address": agent_address
+                        "agent_address": agent_address,
+                        "warning": "Agent ID unknown - enable subgraph for fast lookup"
                     }
                 else:
-                    print(f"⚠️  Address has no NFTs (balance: 0)")
+                    print(f"ℹ️  Address has no NFTs (not registered)")
         except Exception as e:
             print(f"⚠️  Registration check error: {e}")
             import traceback
