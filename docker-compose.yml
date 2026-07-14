@@ -15,8 +15,8 @@ services:
       - AGENT_SALT=${AGENT_SALT}
 
       # Blockchain configuration
-      - RPC_URL=${RPC_URL:-https://1rpc.io/sepolia}
-      - CHAIN_ID=${CHAIN_ID:-11155111}
+      - RPC_URL=${RPC_URL:-https://mainnet.base.org}
+      - CHAIN_ID=${CHAIN_ID:-8453}
 
       # Subgraph API Key (required for The Graph Gateway)
       - SUBGRAPH_API_KEY=${SUBGRAPH_API_KEY}
